@@ -2,11 +2,13 @@ from tqdm import tqdm
 import torch.nn.functional as F 
 import torch
 import numpy as np
+import time
 from utils.metrics import mask_classes
 
 # code copied from https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb#scrollTo=RI1Y8bSImD7N
 # test using a knn monitor
 def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
+    t_1 = time.time()
     net.eval()
     # classes = len(memory_data_loader.dataset.classes)
     classes = 100
@@ -21,6 +23,8 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
                 feature = net(data.cuda(non_blocking=True))
             feature = F.normalize(feature, dim=1)
             feature_bank.append(feature)
+        t_2 = time.time()
+        print("feature bank generation took", t_2-t_1, "seconds")
         # [D, N]
         feature_bank = torch.cat(feature_bank, dim=0).t().contiguous()
         # [N]
@@ -45,6 +49,8 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
             pred_scores = mask_classes(pred_scores, dataset, task_id)
             _, preds = torch.max(pred_scores.data, 1)
             total_top1_mask += torch.sum(preds == target).item()
+        t_3 = time.time()
+        print("knn test took", t_3-t_1, "seconds")
 
     return total_top1 / total_num * 100, total_top1_mask / total_num * 100
 

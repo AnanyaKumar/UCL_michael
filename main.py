@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torchvision
 import numpy as np
 from tqdm import tqdm
+import time
 from arguments import get_args
 from augmentations import get_aug
 from models import get_model
@@ -75,17 +76,31 @@ def main(device, args):
         results, results_mask_classes = [], []
         
         local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
-        for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
-            data_dict = model.observe(images1, labels, images2, notaug_images)
-            logger.update_scalers(data_dict)
+        t_1 = time.time()
 
+        t__0 = time.time()
+        for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
+            print("loading took", time.time()-t__0, "seconds"); t__0 = time.time()
+            data_dict = model.observe(images1, labels, images2, notaug_images)
+            print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
+            logger.update_scalers(data_dict)
+            print("logger took", time.time()-t__0, "seconds"); t__0 = time.time()
+
+        breakpoint()
+
+        t_2 = time.time()
+        print("train took", t_2-t_1, "seconds")
         global_progress.set_postfix(data_dict)
 
         if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
             for i in range(len(dataset.test_loaders)):
+              
               acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
               results.append(acc)
             mean_acc = np.mean(results)
+
+            t_3 = time.time()
+            print("knn took", t_3-t_2, "seconds")
           
         epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
         global_progress.set_postfix(epoch_dict)
@@ -99,11 +114,14 @@ def main(device, args):
         print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
  
       model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+
       torch.save({
         'epoch': epoch+1,
         'state_dict':model.net.state_dict()
       }, model_path)
       print(f"Task Model saved to {model_path}")
+      t_4 = time.time()
+      print("model save took", t_4-t_3, "seconds")
       with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
         f.write(f'{model_path}')
       

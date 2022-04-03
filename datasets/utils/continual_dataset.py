@@ -98,12 +98,15 @@ class ContinualDataset:
 def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory_dataset: datasets, 
                     setting: ContinualDataset) -> Tuple[DataLoader, DataLoader]:
     """
+    masks train_dataset, memory_dataset, and test_dataset, to only an additional number of classes per task
+    then increments setting.i (ContinualDataset) by number classes of task i
+
     Divides the dataset into tasks.
     :param train_dataset: train dataset
     :param test_dataset: test dataset
     :param setting: continual learning setting
     :return: train and test loaders
-    """
+    """    
     train_mask = np.logical_and(np.array(train_dataset.targets) >= setting.i,
         np.array(train_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
     test_mask = np.logical_and(np.array(test_dataset.targets) >= setting.i,
@@ -119,11 +122,11 @@ def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory
     memory_dataset.targets = np.array(memory_dataset.targets)[train_mask]
 
     train_loader = DataLoader(train_dataset,
-                              batch_size=setting.args.train.batch_size, shuffle=True, num_workers=4)
+                              batch_size=setting.args.train.batch_size, shuffle=True, num_workers=16)
     test_loader = DataLoader(test_dataset,
-                             batch_size=setting.args.train.batch_size, shuffle=False, num_workers=4)
+                             batch_size=setting.args.train.batch_size, shuffle=False, num_workers=16)
     memory_loader = DataLoader(memory_dataset,
-                              batch_size=setting.args.train.batch_size, shuffle=False, num_workers=4)
+                              batch_size=setting.args.train.batch_size, shuffle=False, num_workers=16)
 
     setting.test_loaders.append(test_loader)
     setting.train_loaders.append(train_loader)

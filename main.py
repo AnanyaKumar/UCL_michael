@@ -71,7 +71,17 @@ def main(device, args):
     for t in range(dataset.N_TASKS):
       train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
-      for epoch in global_progress:
+      for epoch in global_progress:   
+        if args.lpft:
+          if epoch == 0:
+            model.net.module.backbone.requires_grad_(False)
+            if args.cl_default:
+              model.net.module.backbone.fc.requires_grad_(True)     
+            else:
+              model.net.module.projector.requires_grad_(True)
+          elif epoch == 100:
+            model.net.module.backbone.requires_grad_(True)
+
         model.train()
         results, results_mask_classes = [], []
         
@@ -79,17 +89,24 @@ def main(device, args):
         t_1 = time.time()
 
         t__0 = time.time()
+        loading_time = 0.
+        observe_time = 0.
         for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
-            print("loading took", time.time()-t__0, "seconds"); t__0 = time.time()
+            # print("loading took", time.time()-t__0, "seconds")
+            loading_time += (time.time()-t__0)
+            t__0 = time.time()
             data_dict = model.observe(images1, labels, images2, notaug_images)
-            print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
-            logger.update_scalers(data_dict)
-            print("logger took", time.time()-t__0, "seconds"); t__0 = time.time()
+            # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
+            # logger.update_scalers(data_dict)
+            # print("logger took", time.time()-t__0, "seconds")            
+            observe_time += (time.time()-t__0)
+            t__0 = time.time()
 
-        breakpoint()
+        # print("loading took", loading_time, "seconds")
+        # print("observing took", observe_time, "seconds")
 
         t_2 = time.time()
-        print("train took", t_2-t_1, "seconds")
+        # print("train took", t_2-t_1, "seconds")
         global_progress.set_postfix(data_dict)
 
         if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
@@ -100,9 +117,10 @@ def main(device, args):
             mean_acc = np.mean(results)
 
             t_3 = time.time()
-            print("knn took", t_3-t_2, "seconds")
+            # print("knn took", t_3-t_2, "seconds")
           
         epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+        print("mean_accuracy:", mean_acc)
         global_progress.set_postfix(epoch_dict)
         logger.update_scalers(epoch_dict)
      

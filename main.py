@@ -79,7 +79,7 @@ def main(device, args):
               model.net.module.backbone.fc.requires_grad_(True)     
             else:
               model.net.module.projector.requires_grad_(True)
-          elif epoch == 100:
+          if epoch == int(args.train.stop_at_epoch * args.train.lp_epoch_frac):
             model.net.module.backbone.requires_grad_(True)
 
         model.train()

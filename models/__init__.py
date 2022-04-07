@@ -20,7 +20,7 @@ def get_backbone(backbone, dataset, castrate=True):
 
 
 def get_all_models():
-    return [model.split('.')[0] for model in os.listdir('models')
+    return [model.split('.')[0] for model in os.listdir('/sailhome/msun415/UCL/models')
             if not model.find('__') > -1 and 'py' in model]
 
 def get_model(args, device, len_train_loader, transform):

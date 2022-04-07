@@ -6,7 +6,7 @@ import torchvision
 import numpy as np
 from tqdm import tqdm
 import time
-from arguments import get_args
+from arguments import get_args, update_args, init_args
 from augmentations import get_aug
 from models import get_model
 from tools import AverageMeter, knn_monitor, Logger, file_exist_check
@@ -19,6 +19,7 @@ from datasets.utils.continual_dataset import ContinualDataset
 from models.utils.continual_model import ContinualModel
 from typing import Tuple
 
+from ray import tune
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None) -> Tuple[list, list]:
     """
@@ -56,102 +57,117 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     return accs, accs_mask_classes
 
 
-def main(device, args):
 
-    dataset = get_dataset(args)
-    dataset_copy = get_dataset(args)
-    train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
+def trainable(config):
+  args = config["default_args"]
+  device = args["device"]
+  for (k, v) in config['train'].items(): 
+    args['train'] = update_args(args['train'], k, v)
+  args = init_args(args)
 
-    # define model
-    model = get_model(args, device, len(train_loader), dataset.get_transform(args))
+  dataset = get_dataset(args)
+  dataset_copy = get_dataset(args)
+  train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
 
-    logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
-    accuracy = 0 
+  # define model
+  model = get_model(args, device, len(train_loader), dataset.get_transform(args))
 
-    for t in range(dataset.N_TASKS):
-      train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
-      global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
-      for epoch in global_progress:   
-        if args.lpft:
-          if epoch == 0:
-            model.net.module.backbone.requires_grad_(False)
-            if args.cl_default:
-              model.net.module.backbone.fc.requires_grad_(True)     
-            else:
-              model.net.module.projector.requires_grad_(True)
-          if epoch == int(args.train.stop_at_epoch * args.train.lp_epoch_frac):
-            model.net.module.backbone.requires_grad_(True)
+  logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
+  accuracy = 0 
 
-        model.train()
-        results, results_mask_classes = [], []
-        
-        local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
-        t_1 = time.time()
+  for t in range(dataset.N_TASKS):
+    train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
+    global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
+    for epoch in global_progress:   
+      if args.lpft:
+        if epoch == 0:
+          model.net.module.backbone.requires_grad_(False)
+          if args.cl_default:
+            model.net.module.backbone.fc.requires_grad_(True)     
+          else:
+            model.net.module.projector.requires_grad_(True)
+        if epoch == int(args.train.stop_at_epoch * args.train.lp_epoch_frac):
+          model.net.module.backbone.requires_grad_(True)
 
-        t__0 = time.time()
-        loading_time = 0.
-        observe_time = 0.
-        for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
-            # print("loading took", time.time()-t__0, "seconds")
-            loading_time += (time.time()-t__0)
-            t__0 = time.time()
-            data_dict = model.observe(images1, labels, images2, notaug_images)
-            # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
-            # logger.update_scalers(data_dict)
-            # print("logger took", time.time()-t__0, "seconds")            
-            observe_time += (time.time()-t__0)
-            t__0 = time.time()
-
-        # print("loading took", loading_time, "seconds")
-        # print("observing took", observe_time, "seconds")
-
-        t_2 = time.time()
-        # print("train took", t_2-t_1, "seconds")
-        global_progress.set_postfix(data_dict)
-
-        if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
-            for i in range(len(dataset.test_loaders)):
-              
-              acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
-              results.append(acc)
-            mean_acc = np.mean(results)
-
-            t_3 = time.time()
-            # print("knn took", t_3-t_2, "seconds")
-          
-        epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
-        print("mean_accuracy:", mean_acc)
-        global_progress.set_postfix(epoch_dict)
-        logger.update_scalers(epoch_dict)
-     
-      if args.cl_default:
-        accs = evaluate(model.net.module.backbone, dataset, device)
-        results.append(accs[0])
-        results_mask_classes.append(accs[1])
-        mean_acc = np.mean(accs, axis=1)
-        print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
- 
-      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
-
-      torch.save({
-        'epoch': epoch+1,
-        'state_dict':model.net.state_dict()
-      }, model_path)
-      print(f"Task Model saved to {model_path}")
-      t_4 = time.time()
-      print("model save took", t_4-t_3, "seconds")
-      with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
-        f.write(f'{model_path}')
+      model.train()
+      results, results_mask_classes = [], []
       
-      if hasattr(model, 'end_task'):
-        model.end_task(dataset)
+      local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
+      t_1 = time.time()
 
-    if args.eval is not False and args.cl_default is False:
-        args.eval_from = model_path
+      t__0 = time.time()
+      loading_time = 0.
+      observe_time = 0.
+      for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
+          # print("loading took", time.time()-t__0, "seconds")
+          loading_time += (time.time()-t__0)
+          t__0 = time.time()
+          data_dict = model.observe(images1, labels, images2, notaug_images)
+          # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
+          # logger.update_scalers(data_dict)
+          # print("logger took", time.time()-t__0, "seconds")            
+          observe_time += (time.time()-t__0)
+          t__0 = time.time()
+
+      # print("loading took", loading_time, "seconds")
+      # print("observing took", observe_time, "seconds")
+
+      t_2 = time.time()
+      # print("train took", t_2-t_1, "seconds")
+      global_progress.set_postfix(data_dict)
+
+      if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
+          for i in range(len(dataset.test_loaders)):
+            
+            acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+            results.append(acc)
+          mean_acc = np.mean(results)
+
+          t_3 = time.time()
+          # print("knn took", t_3-t_2, "seconds")
+        
+      epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+      print("mean_accuracy:", mean_acc)
+      global_progress.set_postfix(epoch_dict)
+      logger.update_scalers(epoch_dict)
+    
+    if args.cl_default:
+      accs = evaluate(model.net.module.backbone, dataset, device)
+      results.append(accs[0])
+      results_mask_classes.append(accs[1])
+      mean_acc = np.mean(accs, axis=1)
+      print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
+
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+
+    torch.save({
+      'epoch': epoch+1,
+      'state_dict':model.net.state_dict()
+    }, model_path)
+    print(f"Task Model saved to {model_path}")
+    t_4 = time.time()
+    print("model save took", t_4-t_3, "seconds")
+    with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
+      f.write(f'{model_path}')
+    
+    if hasattr(model, 'end_task'):
+      model.end_task(dataset)
+
+  if args.eval is not False and args.cl_default is False:
+      args.eval_from = model_path
+
+
+def train(args):
+  tune.run(trainable, config={"default_args": vars(args), "train": {
+    "lp_epoch_frac": tune.uniform(0.1, 0.9)
+  }}, num_samples=5, resources_per_trial={"cpu": 16, "gpu": 0.5})
+  # trainable(config={"default_args": vars(args), "train": {
+  #   "lp_epoch_frac": 0.4
+  # }})
 
 if __name__ == "__main__":
     args = get_args()
-    main(device=args.device, args=args)
+    train(args=args)
     completed_log_dir = args.log_dir.replace('in-progress', 'debug' if args.debug else 'completed')
     os.rename(args.log_dir, completed_log_dir)
     print(f'Log file has been saved to {completed_log_dir}')

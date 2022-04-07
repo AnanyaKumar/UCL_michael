@@ -11,6 +11,7 @@ import yaml
 
 import shutil
 import warnings
+from copy import deepcopy
 
 from datetime import datetime
 
@@ -28,6 +29,17 @@ class Namespace(object):
 
         raise AttributeError(f"Can not find {attribute} in namespace. Please write {attribute} in your config file(xxx.yaml)!")
 
+def update_args(args, key, value):
+    args_update = deepcopy(args)
+    setattr(args_update, key, value)
+    return args_update
+
+def init_args(args_dict):
+    """Init argparse from dictionary."""
+    parser = argparse.ArgumentParser()
+    args = parser.parse_args([])
+    args.__dict__ = args_dict
+    return args
 
 def set_deterministic(seed):
     # seed by default is None 

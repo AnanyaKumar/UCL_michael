@@ -24,7 +24,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
             feature = F.normalize(feature, dim=1)
             feature_bank.append(feature)
         t_2 = time.time()
-        print("feature bank generation took", t_2-t_1, "seconds")
+        # print("feature bank generation took", t_2-t_1, "seconds")
         # [D, N]
         feature_bank = torch.cat(feature_bank, dim=0).t().contiguous()
         # [N]
@@ -50,7 +50,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
             _, preds = torch.max(pred_scores.data, 1)
             total_top1_mask += torch.sum(preds == target).item()
         t_3 = time.time()
-        print("knn test took", t_3-t_1, "seconds")
+        # print("knn test took", t_3-t_1, "seconds")
 
     return total_top1 / total_num * 100, total_top1_mask / total_num * 100
 

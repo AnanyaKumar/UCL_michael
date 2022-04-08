@@ -90,11 +90,8 @@ def trainable(config):
             model.net.module.backbone.fc.requires_grad_(True)     
           else:
             model.net.module.projector.requires_grad_(True)
-        # if epoch == int(args.train.stop_at_epoch * args.train.warmup_lp_epoch_f):
-        #   print("unfreezing backbone\n")
-        #   model.net.module.backbone.requires_grad_(True)
-
-      print("backbone parameters sum", sum([x.sum() for x in list(model.net.module.backbone.parameters())]))
+        if epoch == int(args.train.stop_at_epoch * args.train.warmup_lp_epoch_f):
+          model.net.module.backbone.requires_grad_(True)
 
       model.eval()  
       results, results_mask_classes = [], []

@@ -16,7 +16,8 @@ train:
     name: sgd
     weight_decay: 0.0005
     momentum: 0.9
-  warmup_epochs: 10
+  warmup_lp_epoch_f: 0.5
+  warmup_epochs: 10 # derived from warmup_lp_epoch_f
   warmup_lr: 0
   base_lr: 0.03
   final_lr: 0

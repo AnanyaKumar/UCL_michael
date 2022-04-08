@@ -63,7 +63,11 @@ def trainable(config):
   device = args["device"]
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
+    
   args = init_args(args)
+
+  # makes fraction of lp epochs compatible with lr scheduler
+  args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
 
   dataset = get_dataset(args)
   dataset_copy = get_dataset(args)
@@ -86,10 +90,13 @@ def trainable(config):
             model.net.module.backbone.fc.requires_grad_(True)     
           else:
             model.net.module.projector.requires_grad_(True)
-        if epoch == int(args.train.stop_at_epoch * args.train.lp_epoch_frac):
-          model.net.module.backbone.requires_grad_(True)
+        # if epoch == int(args.train.stop_at_epoch * args.train.warmup_lp_epoch_f):
+        #   print("unfreezing backbone\n")
+        #   model.net.module.backbone.requires_grad_(True)
 
-      model.train()  
+      print("backbone parameters sum", sum([x.sum() for x in list(model.net.module.backbone.parameters())]))
+
+      model.eval()  
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
@@ -130,7 +137,6 @@ def trainable(config):
           # print("knn took", t_3-t_2, "seconds")
         
       epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
-      print("mean_accuracy:", mean_acc)
       global_progress.set_postfix(epoch_dict)
       logger.update_scalers(epoch_dict)
     
@@ -162,11 +168,12 @@ def trainable(config):
 
 def train(args):
   tune.run(trainable, config={"default_args": vars(args), "train": {
-    "lp_epoch_frac": 0.1,
-    
-  }}, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 1})
+    "warmup_lp_epoch_f": 0.5,
+    "warmup_lr": tune.grid_search([0.01, 0.03, 0.09]),
+    "base_lr": tune.grid_search([0.01, 0.03, 0.09])    
+  }}, num_samples=9, resources_per_trial={"cpu": 10, "gpu": 0.5})
   # trainable(config={"default_args": vars(args), "train": {
-  #   "lp_epoch_frac": 0.4
+  #   "warmup_lp_epoch_f": 0.4
   # }})
 
 if __name__ == "__main__":

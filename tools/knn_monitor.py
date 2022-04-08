@@ -15,17 +15,18 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
     total_top1 = total_top1_mask = total_top5 = total_num = 0.0
     feature_bank = []
     with torch.no_grad():
-        # generate feature bank
+        # generate feature bank        
         for data, target in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=True):
             if cl_default:
                 feature = net(data.cuda(non_blocking=True), return_features=True)
             else:
                 feature = net(data.cuda(non_blocking=True))
-            feature = F.normalize(feature, dim=1)
-            feature_bank.append(feature)
+            feature_like = torch.empty_like(feature)
+            F.normalize(feature, dim=1, out=feature_like)
+            feature_bank.append(feature_like)
         t_2 = time.time()
         # print("feature bank generation took", t_2-t_1, "seconds")
-        # [D, N]
+        # [D, N]        
         feature_bank = torch.cat(feature_bank, dim=0).t().contiguous()
         # [N]
         # feature_labels = torch.tensor(memory_data_loader.dataset.targets - np.amin(memory_data_loader.dataset.targets), device=feature_bank.device)

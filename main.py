@@ -89,7 +89,7 @@ def trainable(config):
         if epoch == int(args.train.stop_at_epoch * args.train.lp_epoch_frac):
           model.net.module.backbone.requires_grad_(True)
 
-      model.train()
+      model.train()  
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
@@ -105,6 +105,7 @@ def trainable(config):
           data_dict = model.observe(images1, labels, images2, notaug_images)
           # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
           # logger.update_scalers(data_dict)
+          tune.report(loss=data_dict['loss'].item())
           # print("logger took", time.time()-t__0, "seconds")            
           observe_time += (time.time()-t__0)
           t__0 = time.time()
@@ -121,7 +122,9 @@ def trainable(config):
             
             acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
             results.append(acc)
+            tune.report(**{f"acc_task_{i+1}": acc})
           mean_acc = np.mean(results)
+          tune.report(**{f"mean_acc": mean_acc})
 
           t_3 = time.time()
           # print("knn took", t_3-t_2, "seconds")
@@ -159,8 +162,9 @@ def trainable(config):
 
 def train(args):
   tune.run(trainable, config={"default_args": vars(args), "train": {
-    "lp_epoch_frac": tune.uniform(0.1, 0.9)
-  }}, num_samples=5, resources_per_trial={"cpu": 16, "gpu": 0.5})
+    "lp_epoch_frac": 0.1,
+    
+  }}, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 1})
   # trainable(config={"default_args": vars(args), "train": {
   #   "lp_epoch_frac": 0.4
   # }})

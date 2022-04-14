@@ -93,7 +93,7 @@ def trainable(config):
           for pg in model.opt.param_groups:
             pg['lr'] = args.train.ft_lr
 
-      model.eval()
+      model.train()
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
@@ -169,9 +169,9 @@ def train(args):
     "warmup_epochs": tune.grid_search([10]),
     "warmup_lr": tune.grid_search([0]),
     "lp_lr": tune.grid_search([0.03]),
-    "ft_lr": tune.grid_search([0.01]),
-    "final_lr": tune.grid_search([0]),
-  }}, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 0.5})
+    "ft_lr": tune.grid_search([0.001, 0.003, 0.005, 0.01, 0.015, 0.02]),
+    # "final_lr": tune.grid_search([0]),
+  }}, num_samples=1, resources_per_trial={"cpu": 13, "gpu": 0.5})
   # trainable(config={"default_args": vars(args), "train": {
   #   "warmup_lp_epoch_f": 0.4
   # }})

@@ -22,6 +22,7 @@ train:
   ft_lr: 0.01
   final_lr: 0
   num_epochs: 200 # this parameter influence the lr decay
+  num_lp_epochs: 100
   stop_at_epoch: 200 # has to be smaller than num_epochs
   batch_size: 256
   knn_monitor: True # knn monitor will take more time

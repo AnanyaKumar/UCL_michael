@@ -67,7 +67,6 @@ def main(device, args):
 
     logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
     accuracy = 0 
-
     for t in range(dataset.N_TASKS):
       train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
@@ -76,11 +75,11 @@ def main(device, args):
           if epoch == 0:
             model.net.module.backbone.requires_grad_(False)
             if args.cl_default:
-              model.net.module.backbone.fc.requires_grad_(True)     
-            else:
-              model.net.module.projector.requires_grad_(True)
+              model.net.module.backbone.fc.requires_grad_(True)          
           elif epoch == 100:
             model.net.module.backbone.requires_grad_(True)
+            for pg in model.opt.param_groups:
+              pg['lr'] = args.train.ft_lr
 
         model.train()
         results, results_mask_classes = [], []

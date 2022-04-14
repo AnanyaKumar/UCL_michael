@@ -27,6 +27,6 @@ class Finetune(ContinualModel):
 
         loss.backward()
         self.opt.step()
-        data_dict.update({'lr': self.args.train.base_lr})
+        # data_dict.update({'lr': self.args.train.base_lr})
 
         return data_dict

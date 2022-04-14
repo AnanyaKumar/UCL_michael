@@ -19,8 +19,8 @@ class SimSiamTransform():
         self.not_aug_transform = T.Compose([T.ToTensor()])
 
         self.transform = T.Compose([
-            T.RandomCrop(image_size, padding=4),
-            # T.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
+            # T.RandomCrop(image_size, padding=4),
+            T.RandomResizedCrop(image_size, scale=(0.2, 1.0)),
             T.RandomHorizontalFlip(),
             T.RandomApply([T.ColorJitter(0.4,0.4,0.4,0.1)], p=0.8),
             T.RandomGrayscale(p=0.2),

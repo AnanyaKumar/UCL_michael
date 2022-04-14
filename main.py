@@ -67,7 +67,7 @@ def trainable(config):
   args = init_args(args)
 
   # makes fraction of lp epochs compatible with lr scheduler
-  args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
+  # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
 
   dataset = get_dataset(args)
   dataset_copy = get_dataset(args)
@@ -87,13 +87,13 @@ def trainable(config):
         if epoch == 0:
           model.net.module.backbone.requires_grad_(False)
           if args.cl_default:
-            model.net.module.backbone.fc.requires_grad_(True)     
-          else:
-            model.net.module.projector.requires_grad_(True)
-        if epoch == int(args.train.stop_at_epoch * args.train.warmup_lp_epoch_f):
+            model.net.module.backbone.fc.requires_grad_(True)          
+        elif epoch == 100:
           model.net.module.backbone.requires_grad_(True)
+          for pg in model.opt.param_groups:
+            pg['lr'] = args.train.ft_lr
 
-      model.eval()  
+      model.eval()
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
@@ -134,6 +134,7 @@ def trainable(config):
           # print("knn took", t_3-t_2, "seconds")
         
       epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+      print("mean_accuracy:", mean_acc)
       global_progress.set_postfix(epoch_dict)
       logger.update_scalers(epoch_dict)
     
@@ -165,10 +166,12 @@ def trainable(config):
 
 def train(args):
   tune.run(trainable, config={"default_args": vars(args), "train": {
-    "warmup_lp_epoch_f": 0.5,
-    "warmup_lr": tune.grid_search([0.01, 0.03, 0.09]),
-    "base_lr": tune.grid_search([0.01, 0.03, 0.09])    
-  }}, num_samples=9, resources_per_trial={"cpu": 10, "gpu": 0.5})
+    "warmup_epochs": tune.grid_search([10]),
+    "warmup_lr": tune.grid_search([0]),
+    "lp_lr": tune.grid_search([0.03]),
+    "ft_lr": tune.grid_search([0.01]),
+    "final_lr": tune.grid_search([0]),
+  }}, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 0.5})
   # trainable(config={"default_args": vars(args), "train": {
   #   "warmup_lp_epoch_f": 0.4
   # }})

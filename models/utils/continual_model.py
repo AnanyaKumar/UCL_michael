@@ -32,17 +32,17 @@ class ContinualModel(nn.Module):
         
         self.opt = get_optimizer(
             args.train.optimizer.name, self.net, 
-            lr=args.train.base_lr*args.train.batch_size/256, 
+            lr=args.train.lp_lr*args.train.batch_size/256, 
             momentum=args.train.optimizer.momentum,
             weight_decay=args.train.optimizer.weight_decay)
         
-        self.lr_scheduler = LR_Scheduler(
-            self.opt,
-            args.train.warmup_epochs, args.train.warmup_lr*args.train.batch_size/256, 
-            args.train.num_epochs, args.train.base_lr*args.train.batch_size/256, args.train.final_lr*args.train.batch_size/256, 
-            len_train_lodaer,
-            constant_predictor_lr=True # see the end of section 4.2 predictor
-        )
+        # self.lr_scheduler = LR_Scheduler(
+        #     self.opt,
+        #     args.train.warmup_epochs, args.train.warmup_lr*args.train.batch_size/256, 
+        #     args.train.num_epochs, args.train.base_lr*args.train.batch_size/256, args.train.final_lr*args.train.batch_size/256, 
+        #     len_train_lodaer,
+        #     constant_predictor_lr=True # see the end of section 4.2 predictor
+        # )
         self.device = get_device()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -86,6 +86,8 @@ def trainable(config):
       if args.lpft:
         if epoch == 0:
           model.net.module.backbone.requires_grad_(False)
+          for pg in model.opt.param_groups:
+            pg['lr'] = args.train.lp_lr
           if args.cl_default:
             model.net.module.backbone.fc.requires_grad_(True)          
         elif epoch == 100:

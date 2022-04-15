@@ -18,8 +18,10 @@ from utils.loggers import CsvLogger
 from datasets.utils.continual_dataset import ContinualDataset
 from models.utils.continual_model import ContinualModel
 from typing import Tuple
+import os
 
 from ray import tune
+import wandb
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None) -> Tuple[list, list]:
     """
@@ -59,10 +61,15 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
 
 
 def trainable(config):
+  # WANDB    
+  
   args = config["default_args"]
   device = args["device"]
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
+
+  os.environ['logging'] = "wandb,tune"
+  wandb.init(project="lpft", config=args)
     
   args = init_args(args)
 
@@ -93,7 +100,7 @@ def trainable(config):
             model.net.module.backbone.fc.requires_grad_(True)    
           elif args.train.proj_is_head:
             model.net.module.projector.requires_grad_(False)      
-        elif epoch == args.train.num_lp_epochs:
+        if epoch == args.train.num_lp_epochs:
           model.net.module.backbone.requires_grad_(True)          
           for pg in model.opt.param_groups:
             pg['lr'] = args.train.ft_lr
@@ -116,7 +123,8 @@ def trainable(config):
           data_dict = model.observe(images1, labels, images2, notaug_images)
           # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
           # logger.update_scalers(data_dict)
-          tune.report(loss=data_dict['loss'].item())
+          if "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
+          if "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
           # print("logger took", time.time()-t__0, "seconds")            
           observe_time += (time.time()-t__0)
           t__0 = time.time()
@@ -133,9 +141,11 @@ def trainable(config):
             
             acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
             results.append(acc)
-            tune.report(**{f"acc_task_{i+1}": acc})
+            if "tune" in os.environ["logging"]: tune.report(**{f"acc_task_{i+1}": acc})
+            if "wandb" in os.environ["logging"]: wandb.log({f"acc_task_{i+1}": acc})
           mean_acc = np.mean(results)
-          tune.report(**{f"mean_acc": mean_acc})
+          if "tune" in os.environ["logging"]: tune.report(**{f"mean_acc": mean_acc})
+          if "wandb" in os.environ["logging"]: wandb.log({f"mean_acc": mean_acc})
 
           t_3 = time.time()
           # print("knn took", t_3-t_2, "seconds")
@@ -171,20 +181,22 @@ def trainable(config):
       args.eval_from = model_path
 
 
-def train(args):
+def train(args):  
+    ## RAY TUNE
   tune.run(trainable, config={"default_args": vars(args), "train": {
     "warmup_epochs": tune.grid_search([10]),
     "warmup_lr": tune.grid_search([0]),
     "lp_lr": tune.grid_search([0.03]),
-    "ft_lr": tune.grid_search([0.01]),
-    "num_lp_epochs": tune.grid_search([100]),
-    "reset_lp_lr": tune.grid_search([False]),
-    "proj_is_head": tune.grid_search([True, False]),
-    # "final_lr": tune.grid_search([0]),
-  }}, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 0.5})
+    "ft_lr": tune.grid_search([0.03]),
+    "num_lp_epochs": tune.grid_search([0]),
+    # "reset_lp_lr": tune.grid_search([False]),
+    # "proj_is_head": tune.grid_search([False]),
+  }}, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
   # trainable(config={"default_args": vars(args), "train": {
   #   "warmup_lp_epoch_f": 0.4
   # }})
+  
+
 
 if __name__ == "__main__":
     args = get_args()

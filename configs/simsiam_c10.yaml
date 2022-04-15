@@ -19,6 +19,8 @@ train:
   warmup_epochs: 10
   warmup_lr: 0
   lp_lr: 0.03
+  reset_lp_lr: False
+  proj_is_head: False
   ft_lr: 0.01
   final_lr: 0
   num_epochs: 200 # this parameter influence the lr decay

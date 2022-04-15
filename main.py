@@ -85,15 +85,20 @@ def trainable(config):
     for epoch in global_progress:   
       if args.lpft:
         if epoch == 0:
-          model.net.module.backbone.requires_grad_(False)
-          for pg in model.opt.param_groups:
-            pg['lr'] = args.train.lp_lr
+          model.net.module.backbone.requires_grad_(False)          
+          if args.train.reset_lp_lr:
+            for pg in model.opt.param_groups:
+              pg['lr'] = args.train.lp_lr
           if args.cl_default:
-            model.net.module.backbone.fc.requires_grad_(True)          
-        elif epoch == 100:
-          model.net.module.backbone.requires_grad_(True)
+            model.net.module.backbone.fc.requires_grad_(True)    
+          elif args.train.proj_is_head:
+            model.net.module.projector.requires_grad_(False)      
+        elif epoch == args.train.num_lp_epochs:
+          model.net.module.backbone.requires_grad_(True)          
           for pg in model.opt.param_groups:
             pg['lr'] = args.train.ft_lr
+          if not args.cl_default:
+            model.net.module.projector.requires_grad_(True)
 
       model.train()
       results, results_mask_classes = [], []
@@ -171,9 +176,12 @@ def train(args):
     "warmup_epochs": tune.grid_search([10]),
     "warmup_lr": tune.grid_search([0]),
     "lp_lr": tune.grid_search([0.03]),
-    "ft_lr": tune.grid_search([0.001, 0.003, 0.005, 0.01, 0.015, 0.02]),
+    "ft_lr": tune.grid_search([0.01]),
+    "num_lp_epochs": tune.grid_search([100]),
+    "reset_lp_lr": tune.grid_search([False]),
+    "proj_is_head": tune.grid_search([True, False]),
     # "final_lr": tune.grid_search([0]),
-  }}, num_samples=1, resources_per_trial={"cpu": 13, "gpu": 0.5})
+  }}, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 0.5})
   # trainable(config={"default_args": vars(args), "train": {
   #   "warmup_lp_epoch_f": 0.4
   # }})

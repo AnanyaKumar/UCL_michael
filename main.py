@@ -90,7 +90,7 @@ def trainable(config):
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
     global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
     for epoch in global_progress:   
-      if args.lpft:
+      if args.lpft and (not args.train.ft_first or t):
         if epoch == 0:
           model.net.module.backbone.requires_grad_(False)          
           if args.train.reset_lp_lr:
@@ -107,7 +107,10 @@ def trainable(config):
           if not args.cl_default:
             model.net.module.projector.requires_grad_(True)
 
-      model.train()
+      if not args.train.train_first or not t:
+        model.train()
+      else:
+        model.eval()
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
@@ -182,19 +185,21 @@ def trainable(config):
 
 
 def train(args):  
-    ## RAY TUNE
-  tune.run(trainable, config={"default_args": vars(args), "train": {
-    "warmup_epochs": tune.grid_search([10]),
-    "warmup_lr": tune.grid_search([0]),
+  config = {"default_args": vars(args), "train": {
+    "cl_default": tune.grid_search([True]),
+    # "warmup_epochs": tune.grid_search([10]),
+    # "warmup_lr": tune.grid_search([0]),
     "lp_lr": tune.grid_search([0.03]),
     "ft_lr": tune.grid_search([0.03]),
     "num_lp_epochs": tune.grid_search([0]),
-    # "reset_lp_lr": tune.grid_search([False]),
-    # "proj_is_head": tune.grid_search([False]),
-  }}, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
-  # trainable(config={"default_args": vars(args), "train": {
-  #   "warmup_lp_epoch_f": 0.4
-  # }})
+    "reset_lp_lr": tune.grid_search([True]),
+    "proj_is_head": tune.grid_search([False]),
+    "ft_first": tune.grid_search([False]),
+    "train_first": tune.grid_search([False]),
+  }}
+    ## RAY TUNE
+  tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
+  # trainable(config=config)
   
 
 

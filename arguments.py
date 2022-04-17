@@ -103,7 +103,8 @@ def get_args():
 
     vars(args)['aug_kwargs'] = {
         'name':args.model.name,
-        'image_size': args.dataset.image_size
+        'image_size': args.dataset.image_size,
+        'cl_default': args.cl_default
     }
     vars(args)['dataset_kwargs'] = {
         # 'name':args.model.name,

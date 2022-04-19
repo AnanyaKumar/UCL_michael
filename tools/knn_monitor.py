@@ -21,8 +21,9 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
                 feature = net(data.cuda(non_blocking=True), return_features=True)
             else:
                 feature = net(data.cuda(non_blocking=True))
-            feature_norm = torch.empty_like(feature)
-            F.normalize(feature, dim=1, out=feature_norm)
+            # feature_norm = torch.empty_like(feature)
+            # F.normalize(feature, dim=1, out=feature_norm)
+            feature_norm = F.normalize(feature, dim=1)
             feature_bank.append(feature_norm)
         t_2 = time.time()
         # print("feature bank generation took", t_2-t_1, "seconds")

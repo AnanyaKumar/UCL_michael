@@ -23,7 +23,7 @@ def evaluate_single(model, dataset, test_loader, memory_loader, device, k, last=
 
 
 def main(device, args):
-
+    # /sailhome/msun415/UCL/checkpoints/cifar10_results/finetune_simsiam-c10-experiment-resnet18_4.pth
     dataset_copy = get_dataset(args)
     train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
     model = get_model(args, device, len(train_loader), get_aug(train=False, train_classifier=False, **args.aug_kwargs))

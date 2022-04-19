@@ -13,7 +13,7 @@ class Finetune(ContinualModel):
     def observe(self, inputs1, labels, inputs2, notaug_inputs):
 
         self.opt.zero_grad()
-        if self.args.cl_default:
+        if self.args.cl_default or self.args.train.warm_start:
             labels = labels.to(self.device)
             outputs = self.net.module.backbone(inputs1.to(self.device))
             loss = self.loss(outputs, labels).mean()

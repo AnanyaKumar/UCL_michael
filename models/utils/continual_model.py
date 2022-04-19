@@ -30,11 +30,7 @@ class ContinualModel(nn.Module):
         self.args = args
         self.transform = transform
         
-        self.opt = get_optimizer(
-            args.train.optimizer.name, self.net, 
-            lr=args.train.lp_lr*args.train.batch_size/256, 
-            momentum=args.train.optimizer.momentum,
-            weight_decay=args.train.optimizer.weight_decay)
+        self.reset_opt(args)
         
         # self.lr_scheduler = LR_Scheduler(
         #     self.opt,
@@ -44,6 +40,13 @@ class ContinualModel(nn.Module):
         #     constant_predictor_lr=True # see the end of section 4.2 predictor
         # )
         self.device = get_device()
+
+    def reset_opt(self, args):
+        self.opt = get_optimizer(
+            args.train.optimizer.name, self.net, 
+            lr=args.train.lp_lr*args.train.batch_size/256, 
+            momentum=args.train.optimizer.momentum,
+            weight_decay=args.train.optimizer.weight_decay)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

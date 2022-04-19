@@ -1,3 +1,4 @@
+from copy import deepcopy
 import os
 import torch
 import torch.nn as nn
@@ -72,6 +73,7 @@ def trainable(config):
   wandb.init(project="lpft", config=args)
     
   args = init_args(args)
+  args_copy = deepcopy(args)
 
   # makes fraction of lp epochs compatible with lr scheduler
   # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
@@ -81,12 +83,17 @@ def trainable(config):
   train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
 
   # define model
-  model = get_model(args, device, len(train_loader), dataset.get_transform(args))
+  model = get_model(args, device, len(train_loader), dataset.get_transform(args))  
 
   logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
   accuracy = 0 
 
   for t in range(dataset.N_TASKS):
+    # if not args.cl_default and args.train.warm_start: 
+    #   model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{max(t-1,0)}.pth")
+    #   save_dict = torch.load(model_path, map_location='cpu')
+    #   msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True)
+
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
     global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
     for epoch in global_progress:   
@@ -94,16 +101,17 @@ def trainable(config):
         if epoch == 0:
           model.net.module.backbone.requires_grad_(False)          
           if args.train.reset_lp_lr:
-            for pg in model.opt.param_groups:
-              pg['lr'] = args.train.lp_lr
+            pass
+            # for pg in model.opt.param_groups:
+            #   pg['lr'] = args.train.lp_lr
           if args.cl_default:
             model.net.module.backbone.fc.requires_grad_(True)    
           elif args.train.proj_is_head:
             model.net.module.projector.requires_grad_(False)      
         if epoch == args.train.num_lp_epochs:
           model.net.module.backbone.requires_grad_(True)          
-          for pg in model.opt.param_groups:
-            pg['lr'] = args.train.ft_lr
+          # for pg in model.opt.param_groups:
+          #   pg['lr'] = args.train.ft_lr
           if not args.cl_default:
             model.net.module.projector.requires_grad_(True)
 
@@ -158,12 +166,103 @@ def trainable(config):
       global_progress.set_postfix(epoch_dict)
       logger.update_scalers(epoch_dict)
     
+    if args.train.warm_start:      
+      args.cl_default = False
+      args.train.num_epochs = 150 # this parameter influence the lr decay
+      args.train.stop_at_epoch = 150 # has to be smaller than num_epochs
+      args.train.num_lp_epochs = 40
+      args.aug_kwargs['cl_default'] = False
+      args.train.warm_start = False
+      model.net.module.backbone.fc = torch.nn.Identity()    
+      model.args = args
+      model.reset_opt(args)
+      global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
+      if not t:
+        dataset_warm = get_dataset(args)
+        dataset_warm_copy = get_dataset(args)
+        train_loader, memory_loader, test_loader = dataset_warm_copy.get_data_loaders(args)
+
+      train_loader, memory_loader, test_loader = dataset_warm.get_data_loaders(args)
+
+      for epoch in global_progress:   
+        if args.lpft and (not args.train.ft_first or t):
+          if epoch == 0:
+            model.net.module.backbone.requires_grad_(False)          
+            if args.train.reset_lp_lr:
+              pass
+              # for pg in model.opt.param_groups:
+              #   pg['lr'] = args.train.lp_lr
+            if args.cl_default:
+              model.net.module.backbone.fc.requires_grad_(True)    
+            elif args.train.proj_is_head:
+              model.net.module.projector.requires_grad_(False)      
+          if epoch == args.train.num_lp_epochs:
+            model.net.module.backbone.requires_grad_(True)          
+            # for pg in model.opt.param_groups:
+            #   pg['lr'] = args.train.ft_lr
+            if not args.cl_default:
+              model.net.module.projector.requires_grad_(True)
+
+        if not args.train.train_first or not t:
+          model.train()
+        else:
+          model.eval()
+        results, results_mask_classes = [], []
+        
+        local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
+        t_1 = time.time()
+
+        t__0 = time.time()
+        loading_time = 0.
+        observe_time = 0.
+        for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
+            # print("loading took", time.time()-t__0, "seconds")
+            loading_time += (time.time()-t__0)
+            t__0 = time.time()
+            data_dict = model.observe(images1, labels, images2, notaug_images)
+            # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
+            # logger.update_scalers(data_dict)
+            if "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
+            if "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
+            # print("logger took", time.time()-t__0, "seconds")            
+            observe_time += (time.time()-t__0)
+            t__0 = time.time()
+
+        # print("loading took", loading_time, "seconds")
+        # print("observing took", observe_time, "seconds")
+
+        t_2 = time.time()
+        # print("train took", t_2-t_1, "seconds")
+        global_progress.set_postfix(data_dict)
+
+        if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
+            for i in range(len(dataset.test_loaders)):
+              
+              acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+              results.append(acc)
+              if "tune" in os.environ["logging"]: tune.report(**{f"acc_task_{i+1}": acc})
+              if "wandb" in os.environ["logging"]: wandb.log({f"acc_task_{i+1}": acc})
+            mean_acc = np.mean(results)
+            if "tune" in os.environ["logging"]: tune.report(**{f"mean_acc": mean_acc})
+            if "wandb" in os.environ["logging"]: wandb.log({f"mean_acc": mean_acc})
+
+            t_3 = time.time()
+            # print("knn took", t_3-t_2, "seconds")
+          
+        epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+        print("mean_accuracy:", mean_acc)
+        global_progress.set_postfix(epoch_dict)
+        logger.update_scalers(epoch_dict)
+      
     if args.cl_default:
       accs = evaluate(model.net.module.backbone, dataset, device)
       results.append(accs[0])
       results_mask_classes.append(accs[1])
       mean_acc = np.mean(accs, axis=1)
       print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
+    
+    if args.train.warm_start:
+      args = args_copy
 
     model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
 
@@ -185,21 +284,38 @@ def trainable(config):
 
 
 def train(args):  
+  # config = {"default_args": vars(args), "train": {
+  #   "cl_default": True,
+  #   # "warmup_epochs": 10,
+  #   # "warmup_lr": 0,
+  #   "lp_lr": 0.03,
+  #   "ft_lr": 0.03,
+  #   "num_lp_epochs": 25,
+  #   "reset_lp_lr": True,
+  #   "proj_is_head": False,
+  #   "ft_first": False,
+  #   "train_first": False,
+  #   "warm_start": True,
+  # }}
   config = {"default_args": vars(args), "train": {
     "cl_default": tune.grid_search([True]),
     # "warmup_epochs": tune.grid_search([10]),
     # "warmup_lr": tune.grid_search([0]),
     "lp_lr": tune.grid_search([0.03]),
     "ft_lr": tune.grid_search([0.03]),
-    "num_lp_epochs": tune.grid_search([0]),
+    "num_lp_epochs": tune.grid_search([0, 25]),
     "reset_lp_lr": tune.grid_search([True]),
     "proj_is_head": tune.grid_search([False]),
     "ft_first": tune.grid_search([False]),
     "train_first": tune.grid_search([False]),
+    "warm_start": tune.grid_search([True]),
   }}
     ## RAY TUNE
   tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
+
+  # debug mode
   # trainable(config=config)
+
   
 
 

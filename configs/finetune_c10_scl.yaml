@@ -20,8 +20,13 @@ train:
   warmup_lr: 0
   base_lr: 0.03
   final_lr: 0
+  ft_lr: 0.03
+  lp_lr: 0.03
   num_epochs: 50 # this parameter influence the lr decay
   stop_at_epoch: 50 # has to be smaller than num_epochs
+  ft_first: False
+  train_first: False
+  reset_lp_lr: True
   lp_epoch_frac: 0.5
   batch_size: 32
   knn_monitor: True # knn monitor will take more time

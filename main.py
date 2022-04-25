@@ -18,12 +18,13 @@ from utils.loggers import CsvLogger
 from datasets.utils.continual_dataset import ContinualDataset
 from models.utils.continual_model import ContinualModel
 from typing import Tuple
+from copy import deepcopy
 import os
 
 from ray import tune
 import wandb
 
-def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None) -> Tuple[list, list]:
+def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None) -> Tuple[list, list]:
     """
     Evaluates the accuracy of the model for each past task.
     :param model: the model to be evaluated
@@ -31,6 +32,8 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     :return: a tuple of lists, containing the class-il
              and task-il accuracy for each task
     """
+    assert not classifier or not fc
+    if fc: assert isinstance(fc, list) and len(fc) == len(dataset.test_loaders)
     status = model.training
     model.eval()
     accs, accs_mask_classes = [], []
@@ -39,9 +42,12 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
         for data in test_loader:
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
+            
+            outputs = model.embed(inputs)[0] if fc else model(inputs)
             if classifier is not None:
-                outputs = classifier(outputs)
+              outputs = classifier(outputs)
+            elif fc is not None:
+              outputs = fc[k](outputs)
 
             _, pred = torch.max(outputs.data, 1)
             correct += torch.sum(pred == labels).item()
@@ -69,7 +75,8 @@ def trainable(config):
     args['train'] = update_args(args['train'], k, v)
 
   os.environ['logging'] = "wandb,tune"
-  wandb.init(project="lpft", config=args)
+  if not args['debug_lpft']:
+    wandb.init(project="lpft", config=args)
     
   args = init_args(args)
 
@@ -86,8 +93,20 @@ def trainable(config):
   logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
   accuracy = 0 
 
+  if args.last:
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{3}_orig.pth")
+    save_dict = torch.load(model_path, map_location='cpu')
+    msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True) 
+    model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
+
+  old_fcs = []
+
   for t in range(dataset.N_TASKS):
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
+    if args.last and t < 4: 
+      print("continuing cause only train last task...")
+      continue
+
     global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
     for epoch in global_progress:   
       if args.lpft and (not args.train.ft_first or t):
@@ -95,7 +114,7 @@ def trainable(config):
           model.net.module.backbone.requires_grad_(False)          
           if args.train.reset_lp_lr:
             for pg in model.opt.param_groups:
-              pg['lr'] = args.train.lp_lr
+              pg['lr'] = args.train.lp_lr*args.train.batch_size/256
           if args.cl_default:
             model.net.module.backbone.fc.requires_grad_(True)    
           elif args.train.proj_is_head:
@@ -103,7 +122,7 @@ def trainable(config):
         if epoch == args.train.num_lp_epochs:
           model.net.module.backbone.requires_grad_(True)          
           for pg in model.opt.param_groups:
-            pg['lr'] = args.train.ft_lr
+            pg['lr'] = args.train.ft_lr*args.train.batch_size/256
           if not args.cl_default:
             model.net.module.projector.requires_grad_(True)
 
@@ -126,8 +145,8 @@ def trainable(config):
           data_dict = model.observe(images1, labels, images2, notaug_images)
           # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
           # logger.update_scalers(data_dict)
-          if "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
-          if "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
+          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
+          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
           # print("logger took", time.time()-t__0, "seconds")            
           observe_time += (time.time()-t__0)
           t__0 = time.time()
@@ -144,11 +163,11 @@ def trainable(config):
             
             acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
             results.append(acc)
-            if "tune" in os.environ["logging"]: tune.report(**{f"acc_task_{i+1}": acc})
-            if "wandb" in os.environ["logging"]: wandb.log({f"acc_task_{i+1}": acc})
+            if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
+            if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
           mean_acc = np.mean(results)
-          if "tune" in os.environ["logging"]: tune.report(**{f"mean_acc": mean_acc})
-          if "wandb" in os.environ["logging"]: wandb.log({f"mean_acc": mean_acc})
+          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
+          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
 
           t_3 = time.time()
           # print("knn took", t_3-t_2, "seconds")
@@ -159,18 +178,36 @@ def trainable(config):
       logger.update_scalers(epoch_dict)
     
     if args.cl_default:
+      old_fcs.append(deepcopy(model.net.module.backbone.fc))
       accs = evaluate(model.net.module.backbone, dataset, device)
       results.append(accs[0])
       results_mask_classes.append(accs[1])
       mean_acc = np.mean(accs, axis=1)
-      print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
+
+      task_accs = evaluate(model.net.module.backbone, dataset, device, fc=old_fcs)
+      mean_acc_task_il = np.mean(task_accs,axis=1)
+
+      if not args.debug_lpft and "tune" in os.environ["logging"]: 
+        tune.report(class_il_mean_acc=mean_acc[0])
+        tune.report(task_il_mean_acc=mean_acc_task_il[1])
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+        wandb.log({'class_il_mean_acc': mean_acc[0]})
+        wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
+      # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
     model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+    if args.save_as_orig:
+      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_orig.pth")
+    elif args.last:
+      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_last.pth")  
+      
 
     torch.save({
       'epoch': epoch+1,
-      'state_dict':model.net.state_dict()
+      'state_dict':model.net.state_dict(),
+      'opt_state_dict':model.opt.state_dict()
     }, model_path)
+
     print(f"Task Model saved to {model_path}")
     t_4 = time.time()
     print("model save took", t_4-t_3, "seconds")
@@ -186,20 +223,20 @@ def trainable(config):
 
 def train(args):  
   config = {"default_args": vars(args), "train": {
-    "cl_default": tune.grid_search([True]),
+    # "cl_default": tune.grid_search([True]),
     # "warmup_epochs": tune.grid_search([10]),
     # "warmup_lr": tune.grid_search([0]),
-    "lp_lr": tune.grid_search([0.03]),
+    # "lp_lr": tune.grid_search([0.03]),
     "ft_lr": tune.grid_search([0.03]),
-    "num_lp_epochs": tune.grid_search([0]),
-    "reset_lp_lr": tune.grid_search([True]),
-    "proj_is_head": tune.grid_search([False]),
-    "ft_first": tune.grid_search([False]),
-    "train_first": tune.grid_search([False]),
+    "num_lp_epochs": tune.grid_search([25]),
+    # "proj_is_head": tune.grid_search([False]),
   }}
     ## RAY TUNE
-  tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
-  # trainable(config=config)
+  # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
+  if args.debug_lpft:
+    trainable(config=config)
+  else:
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 1})
   
 
 

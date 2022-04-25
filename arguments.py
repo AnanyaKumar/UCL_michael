@@ -66,7 +66,10 @@ def get_args():
     parser.add_argument('--eval_from', type=str, default=None)
     parser.add_argument('--hide_progress', action='store_true')
     parser.add_argument('--cl_default', action='store_true')
+    parser.add_argument('--last', action='store_true')
+    parser.add_argument('--debug_lpft', action='store_true')
     parser.add_argument('--lpft', action='store_true')
+    parser.add_argument('--save_as_orig', action='store_true')
     parser.add_argument('--validation', action='store_true',
                         help='Test on the validation set')
     parser.add_argument('--ood_eval', action='store_true',

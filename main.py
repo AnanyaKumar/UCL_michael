@@ -1,4 +1,5 @@
 import os
+import pdb
 from sklearn.model_selection import ParameterGrid
 import torch
 import torch.nn as nn
@@ -94,18 +95,18 @@ def save_model(model, args, t, epoch, dataset):
 def freeze_weights(model, args):
   num_frozen = 0
   frozen = []
-  for x in model_param_filter(model, args.train.grad_thresh):
-    x[1].requires_grad_(False)
-    frozen.append(x[0])
-    num_frozen += 1
-  print(f"froze {num_frozen} of {len(list(model.named_parameters()))} parameters")
+  for x in model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh):
+    if not "fc" in x[0]:
+      # don't freeze fc for now
+      x[1].requires_grad_(False)
+      frozen.append(x[0])
+      num_frozen += 1
+  print(f"froze {num_frozen} of {len(list((model.net.module.backbone if args.cl_default else model).named_parameters()))} parameters")
   print(frozen)
   if args.train.reset_lp_lr:
     for pg in model.opt.param_groups:
       pg['lr'] = args.train.lp_lr*args.train.batch_size/256
-  if args.cl_default:
-    model.net.module.backbone.fc.requires_grad_(True)    
-  elif args.train.proj_is_head:
+  if not args.cl_default and args.train.proj_is_head:
     model.net.module.projector.requires_grad_(False)      
 
 def unfreeze_weights(model, args):
@@ -114,6 +115,7 @@ def unfreeze_weights(model, args):
     pg['lr'] = args.train.ft_lr*args.train.batch_size/256
   if not args.cl_default:
     model.net.module.projector.requires_grad_(True)
+    model.net.module.predictor.requires_grad_(True)
 
 
 def trainable(config):
@@ -235,12 +237,12 @@ def trainable(config):
 def train(args):  
   config = {"default_args": vars(args), "train": {
     # "save_best": [True],
-    # "cl_default": [True],
+    "cl_default": [True],
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
     "ft_lr": [0.03],
-    "grad_thresh": [-.2, -.4, -.6, -.8, -.1],
+    "grad_thresh": [0., -.25, -.5, -.75],
     # "num_lp_epochs": [25],
     # "proj_is_head": [False],
   }}
@@ -248,10 +250,13 @@ def train(args):
   # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
   if args.debug_lpft:
     config['train'] = ParameterGrid(config['train'])[0]
-    trainable(config=config)
+    try:
+      trainable(config=config)
+    except Exception as e:
+      pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 18, "gpu": 1})
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 9, "gpu": 0.5})
   
 
 

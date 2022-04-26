@@ -1,4 +1,5 @@
 import os
+from sklearn.model_selection import ParameterGrid
 import torch
 import torch.nn as nn
 import torch.nn.functional as F 
@@ -17,6 +18,7 @@ from utils.metrics import mask_classes
 from utils.loggers import CsvLogger
 from datasets.utils.continual_dataset import ContinualDataset
 from models.utils.continual_model import ContinualModel
+from models.utils.gradient import *
 from typing import Tuple
 from copy import deepcopy
 import os
@@ -65,6 +67,54 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     return accs, accs_mask_classes
 
 
+def save_model(model, args, t, epoch, dataset):
+  if args.debug_lpft:
+    return
+  model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+  if args.save_as_orig:
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_orig.pth")
+  elif args.last:
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_last.pth")  
+    
+
+  torch.save({
+    'epoch': epoch+1,
+    'state_dict':model.net.state_dict(),
+    'opt_state_dict':model.opt.state_dict()
+  }, model_path)
+
+  print(f"Task Model saved to {model_path}")
+
+  with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
+    f.write(f'{model_path}')
+  
+  if hasattr(model, 'end_task'):
+    model.end_task(dataset)
+
+def freeze_weights(model, args):
+  num_frozen = 0
+  frozen = []
+  for x in model_param_filter(model, args.train.grad_thresh):
+    x[1].requires_grad_(False)
+    frozen.append(x[0])
+    num_frozen += 1
+  print(f"froze {num_frozen} of {len(list(model.named_parameters()))} parameters")
+  print(frozen)
+  if args.train.reset_lp_lr:
+    for pg in model.opt.param_groups:
+      pg['lr'] = args.train.lp_lr*args.train.batch_size/256
+  if args.cl_default:
+    model.net.module.backbone.fc.requires_grad_(True)    
+  elif args.train.proj_is_head:
+    model.net.module.projector.requires_grad_(False)      
+
+def unfreeze_weights(model, args):
+  model.net.module.backbone.requires_grad_(True)          
+  for pg in model.opt.param_groups:
+    pg['lr'] = args.train.ft_lr*args.train.batch_size/256
+  if not args.cl_default:
+    model.net.module.projector.requires_grad_(True)
+
 
 def trainable(config):
   # WANDB    
@@ -92,6 +142,7 @@ def trainable(config):
 
   logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
   accuracy = 0 
+  
 
   if args.last:
     model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{3}_orig.pth")
@@ -102,6 +153,7 @@ def trainable(config):
   old_fcs = []
 
   for t in range(dataset.N_TASKS):
+    best_current_task = float("-inf")
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
     if args.last and t < 4: 
       print("continuing cause only train last task...")
@@ -111,21 +163,9 @@ def trainable(config):
     for epoch in global_progress:   
       if args.lpft and (not args.train.ft_first or t):
         if epoch == 0:
-          model.net.module.backbone.requires_grad_(False)          
-          if args.train.reset_lp_lr:
-            for pg in model.opt.param_groups:
-              pg['lr'] = args.train.lp_lr*args.train.batch_size/256
-          if args.cl_default:
-            model.net.module.backbone.fc.requires_grad_(True)    
-          elif args.train.proj_is_head:
-            model.net.module.projector.requires_grad_(False)      
+          freeze_weights(model, args)
         if epoch == args.train.num_lp_epochs:
-          model.net.module.backbone.requires_grad_(True)          
-          for pg in model.opt.param_groups:
-            pg['lr'] = args.train.ft_lr*args.train.batch_size/256
-          if not args.cl_default:
-            model.net.module.projector.requires_grad_(True)
-
+          unfreeze_weights(model, args)
       if not args.train.train_first or not t:
         model.train()
       else:
@@ -133,29 +173,14 @@ def trainable(config):
       results, results_mask_classes = [], []
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
-      t_1 = time.time()
 
-      t__0 = time.time()
-      loading_time = 0.
-      observe_time = 0.
       for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
-          # print("loading took", time.time()-t__0, "seconds")
-          loading_time += (time.time()-t__0)
-          t__0 = time.time()
           data_dict = model.observe(images1, labels, images2, notaug_images)
-          # print("observing took", time.time()-t__0, "seconds"); t__0 = time.time()
-          # logger.update_scalers(data_dict)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
-          # print("logger took", time.time()-t__0, "seconds")            
-          observe_time += (time.time()-t__0)
-          t__0 = time.time()
+          if args.debug_lpft:
+            break
 
-      # print("loading took", loading_time, "seconds")
-      # print("observing took", observe_time, "seconds")
-
-      t_2 = time.time()
-      # print("train took", t_2-t_1, "seconds")
       global_progress.set_postfix(data_dict)
 
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
@@ -169,13 +194,19 @@ def trainable(config):
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
 
-          t_3 = time.time()
-          # print("knn took", t_3-t_2, "seconds")
         
       epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
       print("mean_accuracy:", mean_acc)
       global_progress.set_postfix(epoch_dict)
       logger.update_scalers(epoch_dict)
+
+      if args.train.save_best and results[-1] > best_current_task:
+        print(f"{results[-1]} beats {best_current_task}, saving model...")
+        best_current_task = results[-1]
+        save_model(model,args,t,epoch,dataset)
+
+    if not args.train.save_best:
+      save_model(model,args,t,epoch,dataset)
     
     if args.cl_default:
       old_fcs.append(deepcopy(model.net.module.backbone.fc))
@@ -195,27 +226,7 @@ def trainable(config):
         wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
       # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
-    if args.save_as_orig:
-      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_orig.pth")
-    elif args.last:
-      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_last.pth")  
-      
-
-    torch.save({
-      'epoch': epoch+1,
-      'state_dict':model.net.state_dict(),
-      'opt_state_dict':model.opt.state_dict()
-    }, model_path)
-
-    print(f"Task Model saved to {model_path}")
-    t_4 = time.time()
-    print("model save took", t_4-t_3, "seconds")
-    with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
-      f.write(f'{model_path}')
     
-    if hasattr(model, 'end_task'):
-      model.end_task(dataset)
 
   if args.eval is not False and args.cl_default is False:
       args.eval_from = model_path
@@ -223,20 +234,24 @@ def trainable(config):
 
 def train(args):  
   config = {"default_args": vars(args), "train": {
-    # "cl_default": tune.grid_search([True]),
-    # "warmup_epochs": tune.grid_search([10]),
-    # "warmup_lr": tune.grid_search([0]),
-    # "lp_lr": tune.grid_search([0.03]),
-    "ft_lr": tune.grid_search([0.03]),
-    "num_lp_epochs": tune.grid_search([25]),
-    # "proj_is_head": tune.grid_search([False]),
+    # "save_best": [True],
+    # "cl_default": [True],
+    # "warmup_epochs": [10],
+    # "warmup_lr": [0],
+    # "lp_lr": [0.03],
+    "ft_lr": [0.03],
+    "grad_thresh": [-.2, -.4, -.6, -.8, -.1],
+    # "num_lp_epochs": [25],
+    # "proj_is_head": [False],
   }}
     ## RAY TUNE
   # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
   if args.debug_lpft:
+    config['train'] = ParameterGrid(config['train'])[0]
     trainable(config=config)
   else:
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 16, "gpu": 1})
+    config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 18, "gpu": 1})
   
 
 

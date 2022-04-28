@@ -1,3 +1,4 @@
+from collections import defaultdict
 import os
 import pdb
 from sklearn.model_selection import ParameterGrid
@@ -92,17 +93,36 @@ def save_model(model, args, t, epoch, dataset):
   if hasattr(model, 'end_task'):
     model.end_task(dataset)
 
-def freeze_weights(model, args):
+def freeze_weights(model, args, only_log=False):
   num_frozen = 0
   frozen = []
-  for x in model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh):
+  norm_sum = defaultdict(int)
+  norm_sum_counts = defaultdict(int)
+  all_params = list((model.net.module.backbone if args.cl_default else model).named_parameters())
+  for (norm, x) in model_param_filter(model.net.module.backbone if args.cl_default else model, float("inf")): 
+    norm_sum[x[0].split('.')[0]] += norm
+    norm_sum_counts[x[0].split('.')[0]+"_count"] += 1
+
+  for (norm, x) in model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh):        
     if not "fc" in x[0]:
       # don't freeze fc for now
-      x[1].requires_grad_(False)
+      if not only_log: x[1].requires_grad_(False)
       frozen.append(x[0])
       num_frozen += 1
-  print(f"froze {num_frozen} of {len(list((model.net.module.backbone if args.cl_default else model).named_parameters()))} parameters")
-  print(frozen)
+
+  if not only_log: 
+    print(f"froze {num_frozen} of {len(all_params)} parameters")
+    print(frozen)
+
+  if len(norm_sum):
+    for k in norm_sum:
+      if not args.debug_lpft and "tune" in os.environ["logging"]: 
+        tune.report(**{f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+        wandb.log({f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
+      if args.debug_lpft:
+        print({f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
+  if only_log: return
   if args.train.reset_lp_lr:
     for pg in model.opt.param_groups:
       pg['lr'] = args.train.lp_lr*args.train.batch_size/256
@@ -163,9 +183,8 @@ def trainable(config):
 
     global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
     for epoch in global_progress:   
-      if args.lpft and (not args.train.ft_first or t):
-        if epoch == 0:
-          freeze_weights(model, args)
+      if args.lpft and (not args.train.ft_first or t):    
+        freeze_weights(model, args, only_log=epoch)          
         if epoch == args.train.num_lp_epochs:
           unfreeze_weights(model, args)
       if not args.train.train_first or not t:
@@ -191,10 +210,15 @@ def trainable(config):
             acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
             results.append(acc)
             if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
+            if args.debug_lpft:
+              print({f"knn_acc_task_{i+1}": acc})
             if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
           mean_acc = np.mean(results)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
+          if args.debug_lpft:
+            print({f"knn_mean_acc": mean_acc})
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
+
 
         
       epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
@@ -226,6 +250,9 @@ def trainable(config):
       if not args.debug_lpft and "wandb" in os.environ["logging"]: 
         wandb.log({'class_il_mean_acc': mean_acc[0]})
         wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
+      if args.debug_lpft:
+        print({'class_il_mean_acc': mean_acc[0]})
+        print({'task_il_mean_acc': mean_acc_task_il[1]})
       # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
     
@@ -241,8 +268,8 @@ def train(args):
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
-    "ft_lr": [0.03],
-    "grad_thresh": [0., -.25, -.5, -.75],
+    # "ft_lr": [0.03],
+    "grad_thresh": [-1., -.25, -.5, -.75],
     # "num_lp_epochs": [25],
     # "proj_is_head": [False],
   }}
@@ -256,7 +283,11 @@ def train(args):
       pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 9, "gpu": 0.5})
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 7, "gpu": .5})
+    wandb.alert(
+      title="Done", 
+      text=f"Run with train config {config['train']} finished"
+    )
   
 
 

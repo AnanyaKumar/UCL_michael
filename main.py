@@ -12,7 +12,7 @@ import time
 from arguments import get_args, update_args, init_args
 from augmentations import get_aug
 from models import get_model
-from tools import AverageMeter, knn_monitor, Logger, file_exist_check
+from tools import AverageMeter, knn_monitor, probe_monitor, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
 from utils.loggers import *
@@ -96,33 +96,49 @@ def save_model(model, args, t, epoch, dataset):
 def freeze_weights(model, args, only_log=False):
   num_frozen = 0
   frozen = []
-  norm_sum = defaultdict(int)
-  norm_sum_counts = defaultdict(int)
+  norm_avg = defaultdict(int)
+  norm_avg_counts = defaultdict(int)
   all_params = list((model.net.module.backbone if args.cl_default else model).named_parameters())
   for (norm, x) in model_param_filter(model.net.module.backbone if args.cl_default else model, float("inf")): 
-    norm_sum[x[0].split('.')[0]] += norm
-    norm_sum_counts[x[0].split('.')[0]+"_count"] += 1
+    norm_avg[x[0].split('.')[0]] += norm
+    norm_avg_counts[x[0].split('.')[0]+"_count"] += 1  
 
-  for (norm, x) in model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh):        
-    if not "fc" in x[0]:
-      # don't freeze fc for now
-      if not only_log: x[1].requires_grad_(False)
+  for k in norm_avg:
+    norm_avg[k] /= norm_avg_counts[k+"_count"]
+
+  if len(norm_avg):
+    for k in norm_avg:
+      if not args.debug_lpft and "tune" in os.environ["logging"]: 
+        tune.report(**{f"grad/{k}_grad_abs_mean": float(norm_avg[k])})
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+        wandb.log({f"grad/{k}_grad_abs_mean": float(norm_avg[k])})
+      if args.debug_lpft:
+        print({f"grad/{k}_grad_abs_mean": float(norm_avg[k])})
+
+  if only_log: return
+
+  tiebreak = ["layer4", "layer3", "layer2", "layer1", "bn1", "conv1", "fc"]
+
+  if args.train.grad_by_layer:
+    num_layers = int(args.train.grad_thresh)
+    assert num_layers
+    layer_names = sorted(norm_avg, key=lambda x: (norm_avg[x], tiebreak.index(x)))[:num_layers]
+    params_to_freeze = [(0., x) for x in (model.net.module.backbone if args.cl_default else model).named_parameters() if x[0].split('.')[0] in layer_names]
+  else:
+    params_to_freeze = model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh)
+    # move fc ones last
+    params_to_freeze = sorted(params_to_freeze, key=lambda x: tiebreak.index(x[0].split('.')))
+
+  for (norm, x) in params_to_freeze:        
+    if frozen or "fc" not in x[0]:
+      # don't freeze fc if no param has been frozen
+      x[1].requires_grad_(False)
       frozen.append(x[0])
       num_frozen += 1
 
-  if not only_log: 
-    print(f"froze {num_frozen} of {len(all_params)} parameters")
-    print(frozen)
+  print(f"froze {num_frozen} of {len(all_params)} parameters")
+  print(frozen)
 
-  if len(norm_sum):
-    for k in norm_sum:
-      if not args.debug_lpft and "tune" in os.environ["logging"]: 
-        tune.report(**{f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
-      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-        wandb.log({f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
-      if args.debug_lpft:
-        print({f"grad/{k}_grad_abs_mean": norm_sum[k]/norm_sum_counts[k+"_count"]})
-  if only_log: return
   if args.train.reset_lp_lr:
     for pg in model.opt.param_groups:
       pg['lr'] = args.train.lp_lr*args.train.batch_size/256
@@ -148,7 +164,7 @@ def trainable(config):
 
   os.environ['logging'] = "wandb,tune"
   if not args['debug_lpft']:
-    wandb.init(project="lpft", config=args)
+    wandb.init(project="lpft", config=vars(args['train']))
     
   args = init_args(args)
 
@@ -207,7 +223,8 @@ def trainable(config):
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
           for i in range(len(dataset.test_loaders)):
             
-            acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+            acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))             
+
             results.append(acc)
             if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
             if args.debug_lpft:
@@ -255,10 +272,34 @@ def trainable(config):
         print({'task_il_mean_acc': mean_acc_task_il[1]})
       # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
-    
+      probe_results = []
+      for i in range(len(dataset.test_loaders)):
+        acc, acc_mask = probe_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+        probe_results.append(acc)
+        if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_acc_task_{i+1}": acc})
+        if args.debug_lpft:
+          print({f"probe_acc_task_{i+1}": acc})
+        if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_acc_task_{i+1}": acc})
+      mean_acc = np.mean(probe_results)
+      if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_mean_acc": mean_acc})
+      if args.debug_lpft:
+        print({f"probe_mean_acc": mean_acc})
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_mean_acc": mean_acc})
+        
+
+
+
+
+
+  tune.report(done=1)
 
   if args.eval is not False and args.cl_default is False:
       args.eval_from = model_path
+
+  wandb.alert(
+    title="Done", 
+    text=f"Run with train config {config['train']} finished"
+  )
 
 
 def train(args):  
@@ -269,8 +310,11 @@ def train(args):
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
     # "ft_lr": [0.03],
-    "grad_thresh": [-1., -.25, -.5, -.75],
-    # "num_lp_epochs": [25],
+    "grad_thresh": [0.],
+    # "grad_by_layer": [True],
+    "num_lp_epochs": [0],
+    # "num_epochs": [2],
+    # "stop_at_epoch": [2],
     # "proj_is_head": [False],
   }}
     ## RAY TUNE
@@ -283,11 +327,8 @@ def train(args):
       pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 7, "gpu": .5})
-    wandb.alert(
-      title="Done", 
-      text=f"Run with train config {config['train']} finished"
-    )
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
+    
   
 
 

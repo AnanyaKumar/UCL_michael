@@ -1,6 +1,7 @@
 from tqdm import tqdm
 import torch.nn.functional as F 
 import torch
+import torch.nn as nn
 import numpy as np
 import time
 from utils.metrics import mask_classes
@@ -54,6 +55,54 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
         # print("knn test took", t_3-t_1, "seconds")
 
     return total_top1 / total_num * 100, total_top1_mask / total_num * 100
+
+def probe_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
+    probe = nn.Linear(512, dataset.N_CLASSES_PER_TASK).cuda()
+    optim = torch.optim.SGD(probe.parameters(), lr=0.1*memory_data_loader.batch_size/256, momentum=0.9, nesterov=True)
+    loss_function = nn.CrossEntropyLoss()
+    min_loss = float("inf")    
+    loss = float("-inf")
+    i = 0
+    avg_loss = 0
+    while True:
+        avg_loss = 0
+        for data, target in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=True):
+            optim.zero_grad()
+            if cl_default:
+                feature = net(data.cuda(non_blocking=True), return_features=True)
+            else:
+                feature = net(data.cuda(non_blocking=True))
+            feature = feature.detach()
+            feature_norm = torch.empty_like(feature)
+            F.normalize(feature, dim=1, out=feature_norm)
+            loss = loss_function(probe(feature_norm), target.cuda())
+            avg_loss += loss * data.shape[0]
+            loss.backward()
+            optim.step()
+
+        avg_loss = (avg_loss/(memory_data_loader.__len__())).item()  
+        print(f"pass {i} probe loss: {avg_loss}")
+
+        if np.abs(min_loss - avg_loss) < 1e-2:
+            break
+
+        min_loss = min(min_loss, avg_loss)        
+        i += 1
+
+    total_top_1 = total_num = 0
+    with torch.no_grad():
+    
+        test_bar = tqdm(test_data_loader, desc='probe', disable=True)
+        for data, target in test_bar:
+            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            if cl_default:
+                feature = net(data, return_features=True)
+            else:
+                feature = net(data)
+            total_top_1 += (probe(feature).argmax(1) == target).sum().item()
+            total_num += data.shape[0]
+        
+    return total_top_1 / total_num * 100, total_top_1 / total_num * 100
 
 
 # knn monitor as in InstDisc https://arxiv.org/abs/1805.01978

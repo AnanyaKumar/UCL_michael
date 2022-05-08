@@ -96,16 +96,16 @@ def save_model(model, args, t, epoch, dataset):
 
 def freeze_weights(model, args, only_log=False):
 
-  extract_name = lambda x: x[0].split('.')[0] if args.cl_default else '.'.join(x[0].split('.')[2:4])
+  extract_name = lambda x: x[0].split('.')[0] if args.cl_default else '.'.join(x[0].split('.')[1:3])
 
   num_frozen = 0
   frozen = []
   norm_avg = defaultdict(int)
   norm_avg_counts = defaultdict(int)
-  all_params = list((model.net.module.backbone if args.cl_default else model).named_parameters())
+  all_params = list((model.net.backbone if args.cl_default else model).named_parameters())
   if not args.train.freeze_include_head:
     head_name = "fc" if args.cl_default else "predictor"
-    all_params = list(filter(lambda param: param[0].split('.')[0 if args.cl_default else 2] != head_name, all_params))
+    all_params = list(filter(lambda param: param[0].split('.')[0 if args.cl_default else 1] != head_name, all_params))
 
   for (norm, x) in model_param_filter(all_params, float("inf")): 
     norm_avg[extract_name(x)] += norm
@@ -152,15 +152,15 @@ def freeze_weights(model, args, only_log=False):
     for pg in model.opt.param_groups:
       pg['lr'] = args.train.lp_lr*args.train.batch_size/256
   if not args.cl_default and args.train.proj_is_head:
-    model.net.module.projector.requires_grad_(False)      
+    model.net.projector.requires_grad_(False)      
 
 def unfreeze_weights(model, args):
-  model.net.module.backbone.requires_grad_(True)          
+  model.net.backbone.requires_grad_(True)          
   for pg in model.opt.param_groups:
     pg['lr'] = args.train.ft_lr*args.train.batch_size/256
   if not args.cl_default:
-    model.net.module.projector.requires_grad_(True)
-    model.net.module.predictor.requires_grad_(True)
+    model.net.projector.requires_grad_(True)
+    model.net.predictor.requires_grad_(True)
 
 
 def trainable(config):
@@ -232,7 +232,7 @@ def trainable(config):
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
           for i in range(len(dataset.test_loaders)):
             
-            acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))             
+            acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))             
 
             results.append(acc)
             if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
@@ -261,13 +261,13 @@ def trainable(config):
       save_model(model,args,t,epoch,dataset)
     
     if args.cl_default:
-      old_fcs.append(deepcopy(model.net.module.backbone.fc))
-      accs = evaluate(model.net.module.backbone, dataset, device)
+      old_fcs.append(deepcopy(model.net.backbone.fc))
+      accs = evaluate(model.net.backbone, dataset, device)
       results.append(accs[0])
       results_mask_classes.append(accs[1])
       mean_acc = np.mean(accs, axis=1)
 
-      task_accs = evaluate(model.net.module.backbone, dataset, device, fc=old_fcs)
+      task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs)
       mean_acc_task_il = np.mean(task_accs,axis=1)
 
       if not args.debug_lpft and "tune" in os.environ["logging"]: 
@@ -283,7 +283,7 @@ def trainable(config):
 
     probe_results = []
     for i in range(len(dataset.test_loaders)):
-      acc, acc_mask = probe_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+      acc, acc_mask = probe_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
       probe_results.append(acc)
       if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_acc_task_{i+1}": acc})
       if args.debug_lpft:
@@ -314,14 +314,14 @@ def trainable(config):
 def train(args):  
   config = {"default_args": vars(args), "train": {
     # "save_best": [True],
-    "cl_default": [True],
+    "cl_default": [False],
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
-    # "ft_lr": [0.03],
+    "ft_lr": [0.01,0.03],
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    "num_lp_epochs": [0,25],
+    "num_lp_epochs": [100],
     # "num_epochs": [2],
     # "stop_at_epoch": [2],
     # "proj_is_head": [False],
@@ -331,10 +331,10 @@ def train(args):
   if args.debug_lpft:
     os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     config['train'] = ParameterGrid(config['train'])[0]
-    try:
-      trainable(config=config)
-    except Exception as e:
-      pdb.post_mortem()
+    # try:
+    trainable(config=config)
+    # except Exception as e:
+    #   pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
     tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})

@@ -25,7 +25,7 @@ class ContinualModel(nn.Module):
         super(ContinualModel, self).__init__()
 
         self.net = backbone
-        self.net = nn.DataParallel(self.net)
+        # self.net = nn.DataParallel(self.net)
         self.loss = loss
         self.args = args
         self.transform = transform

@@ -23,7 +23,9 @@ train:
   final_lr: 0
   ft_lr: 0.03
   lp_lr: 0.03
-  grad_thresh: 0
+  grad_thresh: -1.
+  grad_by_layer: False
+  freeze_include_head: False
   num_lp_epochs: 25
   num_epochs: 50 # this parameter influence the lr decay
   stop_at_epoch: 50 # has to be smaller than num_epochs

@@ -28,6 +28,7 @@ import os
 from ray import tune
 import wandb
 
+
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None) -> Tuple[list, list]:
     """
     Evaluates the accuracy of the model for each past task.
@@ -94,14 +95,21 @@ def save_model(model, args, t, epoch, dataset):
     model.end_task(dataset)
 
 def freeze_weights(model, args, only_log=False):
+
+  extract_name = lambda x: x[0].split('.')[0] if args.cl_default else '.'.join(x[0].split('.')[2:4])
+
   num_frozen = 0
   frozen = []
   norm_avg = defaultdict(int)
   norm_avg_counts = defaultdict(int)
   all_params = list((model.net.module.backbone if args.cl_default else model).named_parameters())
-  for (norm, x) in model_param_filter(model.net.module.backbone if args.cl_default else model, float("inf")): 
-    norm_avg[x[0].split('.')[0]] += norm
-    norm_avg_counts[x[0].split('.')[0]+"_count"] += 1  
+  if not args.train.freeze_include_head:
+    head_name = "fc" if args.cl_default else "predictor"
+    all_params = list(filter(lambda param: param[0].split('.')[0 if args.cl_default else 2] != head_name, all_params))
+
+  for (norm, x) in model_param_filter(all_params, float("inf")): 
+    norm_avg[extract_name(x)] += norm
+    norm_avg_counts[extract_name(x)+"_count"] += 1  
 
   for k in norm_avg:
     norm_avg[k] /= norm_avg_counts[k+"_count"]
@@ -117,24 +125,25 @@ def freeze_weights(model, args, only_log=False):
 
   if only_log: return
 
-  tiebreak = ["layer4", "layer3", "layer2", "layer1", "bn1", "conv1", "fc"]
+  if args.cl_default:
+    # at the start, when all grad is 0, freeze in this biased order
+    tiebreak = ["conv1", "bn1", "layer1", "layer2", "layer3", "layer4", "fc"]
+  else:
+    tiebreak = ['backbone.conv1', 'backbone.bn1', 'backbone.layer1', 'backbone.layer2', 'backbone.layer3', 'backbone.layer4', 'projector.layer1', 'projector.layer2', 'projector.layer3', 'predictor.layer1', 'predictor.layer2']
 
   if args.train.grad_by_layer:
     num_layers = int(args.train.grad_thresh)
     assert num_layers
     layer_names = sorted(norm_avg, key=lambda x: (norm_avg[x], tiebreak.index(x)))[:num_layers]
-    params_to_freeze = [(0., x) for x in (model.net.module.backbone if args.cl_default else model).named_parameters() if x[0].split('.')[0] in layer_names]
+    params_to_freeze = [(0., x) for x in all_params if extract_name(x) in layer_names]
   else:
-    params_to_freeze = model_param_filter(model.net.module.backbone if args.cl_default else model, args.train.grad_thresh)
-    # move fc ones last
-    params_to_freeze = sorted(params_to_freeze, key=lambda x: tiebreak.index(x[0].split('.')))
+    params_to_freeze = model_param_filter(all_params, args.train.grad_thresh)
+    params_to_freeze = sorted(params_to_freeze, key=lambda x: tiebreak.index(extract_name(x[1])))
 
   for (norm, x) in params_to_freeze:        
-    if frozen or "fc" not in x[0]:
-      # don't freeze fc if no param has been frozen
-      x[1].requires_grad_(False)
-      frozen.append(x[0])
-      num_frozen += 1
+    x[1].requires_grad_(False)
+    frozen.append(x[0])
+    num_frozen += 1
 
   print(f"froze {num_frozen} of {len(all_params)} parameters")
   print(frozen)
@@ -272,20 +281,20 @@ def trainable(config):
         print({'task_il_mean_acc': mean_acc_task_il[1]})
       # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
-      probe_results = []
-      for i in range(len(dataset.test_loaders)):
-        acc, acc_mask = probe_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
-        probe_results.append(acc)
-        if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_acc_task_{i+1}": acc})
-        if args.debug_lpft:
-          print({f"probe_acc_task_{i+1}": acc})
-        if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_acc_task_{i+1}": acc})
-      mean_acc = np.mean(probe_results)
-      if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_mean_acc": mean_acc})
+    probe_results = []
+    for i in range(len(dataset.test_loaders)):
+      acc, acc_mask = probe_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+      probe_results.append(acc)
+      if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_acc_task_{i+1}": acc})
       if args.debug_lpft:
-        print({f"probe_mean_acc": mean_acc})
-      if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_mean_acc": mean_acc})
-        
+        print({f"probe_acc_task_{i+1}": acc})
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_acc_task_{i+1}": acc})
+    mean_acc = np.mean(probe_results)
+    if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_mean_acc": mean_acc})
+    if args.debug_lpft:
+      print({f"probe_mean_acc": mean_acc})
+    if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_mean_acc": mean_acc})
+      
 
 
 
@@ -310,9 +319,9 @@ def train(args):
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
     # "ft_lr": [0.03],
-    "grad_thresh": [0.],
+    # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    "num_lp_epochs": [0],
+    "num_lp_epochs": [0,25],
     # "num_epochs": [2],
     # "stop_at_epoch": [2],
     # "proj_is_head": [False],
@@ -320,6 +329,7 @@ def train(args):
     ## RAY TUNE
   # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
   if args.debug_lpft:
+    os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     config['train'] = ParameterGrid(config['train'])[0]
     try:
       trainable(config=config)

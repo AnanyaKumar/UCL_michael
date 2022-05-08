@@ -75,6 +75,7 @@ def probe_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl
             feature = feature.detach()
             feature_norm = torch.empty_like(feature)
             F.normalize(feature, dim=1, out=feature_norm)
+            target = target % dataset.N_CLASSES_PER_TASK
             loss = loss_function(probe(feature_norm), target.cuda())
             avg_loss += loss * data.shape[0]
             loss.backward()
@@ -99,6 +100,7 @@ def probe_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl
                 feature = net(data, return_features=True)
             else:
                 feature = net(data)
+            target = target % dataset.N_CLASSES_PER_TASK
             total_top_1 += (probe(feature).argmax(1) == target).sum().item()
             total_num += data.shape[0]
         

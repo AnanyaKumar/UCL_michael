@@ -16,6 +16,7 @@ train:
     name: sgd
     weight_decay: 0.0005
     momentum: 0.9
+  save_best: False
   warmup_epochs: 10
   warmup_lr: 0
   lp_lr: 0.03
@@ -23,6 +24,9 @@ train:
   proj_is_head: False
   ft_lr: 0.03
   ft_first: False
+  grad_thresh: -1.
+  grad_by_layer: False
+  freeze_include_head: False
   train_first: False
   final_lr: 0
   num_epochs: 200 # this parameter influence the lr decay

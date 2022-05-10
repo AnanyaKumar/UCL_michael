@@ -1,7 +1,8 @@
 from collections import defaultdict
 import os
 import pdb
-from sklearn.model_selection import ParameterGrid
+from turtle import update
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F 
@@ -9,10 +10,12 @@ import torchvision
 import numpy as np
 from tqdm import tqdm
 import time
+from sklearn.model_selection import ParameterGrid
+
 from arguments import get_args, update_args, init_args
 from augmentations import get_aug
 from models import get_model
-from tools import AverageMeter, knn_monitor, probe_monitor, Logger, file_exist_check
+from tools import AverageMeter, knn_monitor, probe_monitor, logistic_monitor, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
 from utils.loggers import *
@@ -171,6 +174,9 @@ def trainable(config):
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
 
+    if k in args["aug_kwargs"]:
+      args["aug_kwargs"][k] = v
+
   os.environ['logging'] = "wandb,tune"
   if not args['debug_lpft']:
     wandb.init(project="lpft", config=vars(args['train']))
@@ -281,19 +287,35 @@ def trainable(config):
         print({'task_il_mean_acc': mean_acc_task_il[1]})
       # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
+    probe_train_results = []
     probe_results = []
     for i in range(len(dataset.test_loaders)):
-      acc, acc_mask = probe_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+      train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
       probe_results.append(acc)
-      if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_acc_task_{i+1}": acc})
+      probe_train_results.append(train_acc)
+      if not args.debug_lpft and "tune" in os.environ["logging"]: 
+        tune.report(**{f"probe_acc_task_{i+1}": acc})
+        tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
+        tune.report(**{f"probe_best_c_{i+1}": best_c})
       if args.debug_lpft:
         print({f"probe_acc_task_{i+1}": acc})
-      if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_acc_task_{i+1}": acc})
+        print({f"probe_train_acc_task_{i+1}": train_acc})
+        print({f"probe_best_c_{i+1}": best_c})
+      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+        wandb.log({f"probe_acc_task_{i+1}": acc})
+        wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
+        wandb.log({f"probe_best_c_{i+1}": best_c})
     mean_acc = np.mean(probe_results)
-    if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"probe_mean_acc": mean_acc})
+    mean_train_acc = np.mean(probe_train_results)
+    if not args.debug_lpft and "tune" in os.environ["logging"]: 
+      tune.report(**{f"probe_train_mean_acc": mean_train_acc})
+      tune.report(**{f"probe_mean_acc": mean_acc})
     if args.debug_lpft:
       print({f"probe_mean_acc": mean_acc})
-    if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"probe_mean_acc": mean_acc})
+      print({f"probe_train_mean_acc": mean_train_acc})
+    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+      wandb.log({f"probe_mean_acc": mean_acc})
+      wandb.log({f"probe_train_mean_acc": mean_train_acc})
       
 
 
@@ -311,6 +333,10 @@ def trainable(config):
   )
 
 
+
+  ##### RUNNNNNNN THISSSSSS!
+
+
 def train(args):  
   config = {"default_args": vars(args), "train": {
     # "save_best": [True],
@@ -318,10 +344,11 @@ def train(args):
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
-    "ft_lr": [0.01,0.03],
+    "ft_lr": [0.01],
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    "num_lp_epochs": [100],
+    "num_lp_epochs": [40],
+    "scale": [0.1, 0.9],
     # "num_epochs": [2],
     # "stop_at_epoch": [2],
     # "proj_is_head": [False],
@@ -337,7 +364,7 @@ def train(args):
     #   pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 10, "gpu": 1})
     
   
 

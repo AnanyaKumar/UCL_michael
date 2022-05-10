@@ -17,7 +17,7 @@ class SimSiamTransform():
         # I use the setting from simclr which is 50% chance applying the gaussian blur
         # the 32 is prepared for cifar training where they disabled gaussian blur
         self.not_aug_transform = T.Compose([T.ToTensor()])
-        first_aug = T.RandomCrop(image_size, padding=4) if aug_kwargs['cl_default'] else T.RandomResizedCrop(image_size, scale=(0.2, 1.0))
+        first_aug = T.RandomCrop(image_size, padding=4) if aug_kwargs['cl_default'] else T.RandomResizedCrop(image_size, scale=(aug_kwargs['scale'], 1.0))
         self.transform = T.Compose([
             first_aug,
             T.RandomHorizontalFlip(),

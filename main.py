@@ -76,11 +76,11 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
 def save_model(model, args, t, epoch, dataset):
   if args.debug_lpft:
     return
-  model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+  model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}.pth")
   if args.save_as_orig:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_orig.pth")
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}_orig.pth")
   elif args.last:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}_last.pth")  
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}_last.pth")  
     
 
   torch.save({
@@ -179,8 +179,8 @@ def trainable(config):
 
   os.environ['logging'] = "wandb,tune"
   if not args['debug_lpft']:
-    wandb.init(project="lpft", config=vars(args['train']))
-    
+    wandb.init(project=args['project_name'], name=args['run_name'],
+               group=args['group_name'], config=vars(args['train']))
   args = init_args(args)
 
   # makes fraction of lp epochs compatible with lr scheduler
@@ -198,7 +198,7 @@ def trainable(config):
   
 
   if args.last:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{3}_orig.pth")
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{3}_orig.pth")
     save_dict = torch.load(model_path, map_location='cpu')
     msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True) 
     model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
@@ -363,8 +363,9 @@ def train(args):
     # except Exception as e:
     #   pdb.post_mortem()
   else:
-    config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 10, "gpu": 1})
+    trainable(config=config)
+    # config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
+    # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 10, "gpu": 1})
     
   
 

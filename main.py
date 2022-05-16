@@ -17,6 +17,7 @@ from utils.loggers import CsvLogger
 from datasets.utils.continual_dataset import ContinualDataset
 from models.utils.continual_model import ContinualModel
 from typing import Tuple
+import wandb
 
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None) -> Tuple[list, list]:
@@ -54,9 +55,14 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     model.train(status)
     return accs, accs_mask_classes
 
+def init_wandb(args):
+    wandb.init(project=args.project_name, name=args.run_name,
+               group=args.group_name, config=vars(args.train))
 
 def main(device, args):
-
+    use_wandb=True
+    if use_wandb:
+        init_wandb(args)
     dataset = get_dataset(args)
     dataset_copy = get_dataset(args)
     train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
@@ -75,17 +81,23 @@ def main(device, args):
         results, results_mask_classes = [], []
         
         local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
+        total
         for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
             data_dict = model.observe(images1, labels, images2, notaug_images)
             logger.update_scalers(data_dict)
-
+            if use_wandb: wandb.log({'loss': data_dict['loss']})
+        print(data_dict)
+        print(data_dict['loss'])
+        print(type(data_dict['loss']))
         global_progress.set_postfix(data_dict)
 
         if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
             for i in range(len(dataset.test_loaders)):
               acc, acc_mask = knn_monitor(model.net.module.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
               results.append(acc)
+              if use_wandb: wandb.log({f"knn_acc_task_{i+1}": acc})
             mean_acc = np.mean(results)
+            if use_wandb: wandb.log({f"knn_mean_acc": mean_acc})
           
         epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
         global_progress.set_postfix(epoch_dict)
@@ -98,7 +110,7 @@ def main(device, args):
         mean_acc = np.mean(accs, axis=1)
         print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
  
-      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
+      model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}.pth")
       torch.save({
         'epoch': epoch+1,
         'state_dict':model.net.state_dict()

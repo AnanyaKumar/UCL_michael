@@ -4,7 +4,8 @@ from .simsiam import SimSiam
 from .barlowtwins import BarlowTwins
 from torchvision.models import resnet50, resnet18
 import torch
-from .backbones import resnet18
+from .backbones import resnet18, resnet152
+# I'm guessing they might use the torch resnet50 for tinyimagenet, so not importing resnet50 from backbones. 
 
 def get_backbone(backbone, dataset, castrate=True):
     backbone = eval(f"{backbone}()")
@@ -20,7 +21,11 @@ def get_backbone(backbone, dataset, castrate=True):
 
 
 def get_all_models():
-    return [model.split('.')[0] for model in os.listdir('models')
+    if os.path.exists('models'):
+        models_dir = os.listdir('models')
+    else:
+        models_dir = os.listdir('../models')
+    return [model.split('.')[0] for model in models_dir
             if not model.find('__') > -1 and 'py' in model]
 
 def get_model(args, device, len_train_loader, transform):

@@ -2,9 +2,10 @@ import os
 import importlib
 from .simsiam import SimSiam
 from .barlowtwins import BarlowTwins
-from torchvision.models import resnet50, resnet18
+from torchvision.models import resnet50
 import torch
-from .backbones import resnet18
+from .backbones import resnet18, resnet152
+# I'm guessing they might use the torch resnet50 for tinyimagenet, so not importing resnet50 from backbones.
 
 def get_backbone(backbone, dataset, castrate=True):
     backbone = eval(f"{backbone}()")

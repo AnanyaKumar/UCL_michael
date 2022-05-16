@@ -5,6 +5,7 @@
 
 from abc import abstractmethod
 from argparse import Namespace
+from sklearn.model_selection import train_test_split
 from torch import nn as nn
 from torchvision.transforms import transforms
 from torch.utils.data import DataLoader
@@ -107,10 +108,14 @@ def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory
     :param setting: continual learning setting
     :return: train and test loaders
     """    
+
+    # train_dataset.data, _, train_dataset.targets, _, memory_dataset.data, _, memory_dataset.targets, _ = train_test_split(train_dataset.data, train_dataset.targets, memory_dataset.data, memory_dataset.targets, train_size=0.1, stratify=train_dataset.targets, random_state=0)    
+
     train_mask = np.logical_and(np.array(train_dataset.targets) >= setting.i,
         np.array(train_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
     test_mask = np.logical_and(np.array(test_dataset.targets) >= setting.i,
         np.array(test_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
+    
     
     train_dataset.data = train_dataset.data[train_mask]
     test_dataset.data = test_dataset.data[test_mask]

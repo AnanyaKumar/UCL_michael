@@ -171,12 +171,15 @@ def trainable(config):
   
   args = config["default_args"]
   device = args["device"]
+
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
 
     if k in args["aug_kwargs"]:
       args["aug_kwargs"][k] = v
-
+  
+  args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
+    
   os.environ['logging'] = "wandb,tune"
   if not args['debug_lpft']:
     wandb.init(project="lpft", config=vars(args['train']))
@@ -340,17 +343,16 @@ def trainable(config):
 def train(args):  
   config = {"default_args": vars(args), "train": {
     # "save_best": [True],
-    "cl_default": [False],
+    # "cl_default": [False],
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
     # "lp_lr": [0.03],
-    "ft_lr": [0.01],
+    # "ft_lr": [0.01],
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    "num_lp_epochs": [40],
-    "scale": [0.1, 0.9],
-    # "num_epochs": [2],
-    # "stop_at_epoch": [2],
+    # "num_lp_epochs": [40],
+    # "scale": [0.5],
+    # "num_epochs": [260,280,300,320,340,360],
     # "proj_is_head": [False],
   }}
     ## RAY TUNE
@@ -364,7 +366,7 @@ def train(args):
     #   pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 10, "gpu": 1})
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":14, "gpu": 1})
     
   
 

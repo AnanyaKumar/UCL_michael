@@ -1,3 +1,7 @@
+wandb/*
+sl_outs/*
+*.swp
+*.out
 *.npy
 __pycache__/
 checkpoints/

@@ -17,6 +17,7 @@ import torchvision
 NAMES = {
     SequentialMNIST.NAME: SequentialMNIST,
     SequentialFMNIST.NAME: SequentialFMNIST,
+    FMOW.NAME: FMOW,
     SequentialSVHN.NAME: SequentialSVHN,
     SequentialCIFAR10.NAME: SequentialCIFAR10,
     SequentialCIFAR100.NAME: SequentialCIFAR100,

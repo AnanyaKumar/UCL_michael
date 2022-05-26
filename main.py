@@ -14,7 +14,7 @@ from sklearn.model_selection import ParameterGrid
 
 from arguments import get_args, update_args, init_args
 from augmentations import get_aug
-from models import get_model
+from models import get_model, get_num_params
 from tools import AverageMeter, knn_monitor, probe_monitor, logistic_monitor, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
@@ -196,6 +196,10 @@ def trainable(config):
   # define model
   model = get_model(args, device, len(train_loader), dataset.get_transform(args))
 
+  backbone_n_params = get_num_params(model.net.backbone)
+  if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(backbone_n_params=backbone_n_params)
+  if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'backbone_n_params': backbone_n_params})
+
   logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
   accuracy = 0 
   
@@ -207,6 +211,10 @@ def trainable(config):
     model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
 
   old_fcs = []
+  all_task_results = []
+
+  all_probe_results = []
+  all_probe_train_results = []
 
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
@@ -229,7 +237,7 @@ def trainable(config):
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
 
-      for idx, ((images1, images2, notaug_images), labels) in enumerate(local_progress):
+      for idx, ((images1, images2, notaug_images), labels, *meta_args) in enumerate(local_progress):
           data_dict = model.observe(images1, labels, images2, notaug_images)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
@@ -248,7 +256,14 @@ def trainable(config):
             if args.debug_lpft:
               print({f"knn_acc_task_{i+1}": acc})
             if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
-          mean_acc = np.mean(results)
+          if not epoch:
+            all_task_results.append(results)
+          else:
+            all_task_results[-1] = results
+          if args.train.naive:
+            mean_acc = np.mean([all_task_results[i][i] for i in range(len(dataset.test_loaders))])
+          else:
+            mean_acc = np.mean(results)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
           if args.debug_lpft:
             print({f"knn_mean_acc": mean_acc})
@@ -308,8 +323,15 @@ def trainable(config):
         wandb.log({f"probe_acc_task_{i+1}": acc})
         wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
         wandb.log({f"probe_best_c_{i+1}": best_c})
-    mean_acc = np.mean(probe_results)
-    mean_train_acc = np.mean(probe_train_results)
+    all_probe_results.append(probe_results)
+    all_probe_train_results.append(probe_train_results)
+      
+    if args.train.naive:
+      mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
+      mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
+    else:
+      mean_acc = np.mean(probe_results)
+      mean_train_acc = np.mean(probe_train_results)
     if not args.debug_lpft and "tune" in os.environ["logging"]: 
       tune.report(**{f"probe_train_mean_acc": mean_train_acc})
       tune.report(**{f"probe_mean_acc": mean_acc})
@@ -343,6 +365,7 @@ def trainable(config):
 def train(args):  
   config = {"default_args": vars(args), "train": {
     # "save_best": [True],
+    # "naive": [True, False],
     # "cl_default": [False],
     # "warmup_epochs": [10],
     # "warmup_lr": [0],
@@ -350,7 +373,7 @@ def train(args):
     # "ft_lr": [0.01],
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    # "num_lp_epochs": [40],
+    "num_lp_epochs": [0, 25],
     # "scale": [0.5],
     # "num_epochs": [260,280,300,320,340,360],
     # "proj_is_head": [False],
@@ -360,10 +383,10 @@ def train(args):
   if args.debug_lpft:
     os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
     config['train'] = ParameterGrid(config['train'])[0]
-    # try:
-    trainable(config=config)
-    # except Exception as e:
-    #   pdb.post_mortem()
+    try:
+      trainable(config=config)
+    except Exception as e:
+      pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
     tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":14, "gpu": 1})

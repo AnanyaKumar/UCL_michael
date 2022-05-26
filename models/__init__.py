@@ -2,9 +2,25 @@ import os
 import importlib
 from .simsiam import SimSiam
 from .barlowtwins import BarlowTwins
-from torchvision.models import resnet50, resnet18
+from torchvision.models import resnet50, resnet18, resnet34, resnet101, resnet152
 import torch
 from .backbones import resnet18
+
+
+def get_num_params(model, is_trainable = None):
+    """Get number of parameters of the model, specified by 'None': all parameters;
+    True: trainable parameters; False: non-trainable parameters.
+    """
+    num_params = 0
+    for param in list(model.parameters()):
+        nn=1
+        if is_trainable is None \
+            or (is_trainable is True and param.requires_grad is True) \
+            or (is_trainable is False and param.requires_grad is False):
+            for s in list(param.size()):
+                nn = nn * s
+            num_params += nn
+    return num_params
 
 def get_backbone(backbone, dataset, castrate=True):
     backbone = eval(f"{backbone}()")
@@ -27,6 +43,9 @@ def get_model(args, device, len_train_loader, transform):
     loss = torch.nn.CrossEntropyLoss()
     if args.model.name == 'simsiam':
         backbone =  SimSiam(get_backbone(args.model.backbone, args.dataset.name, args.cl_default)).to(device)
+        for class_ in [resnet18, resnet34, resnet50, resnet101, resnet152]:            
+            backbone_ = class_()
+            print(f"{class_.__name__} has {get_num_params(backbone_)} params")
         if args.model.proj_layers is not None:
             backbone.projector.set_layers(args.model.proj_layers)
     elif args.model.name == 'barlowtwins':

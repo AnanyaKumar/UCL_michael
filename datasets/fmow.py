@@ -37,13 +37,17 @@ class FMOW(ContinualDataset):
         transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
         self.train_data = dataset.get_subset("train", transform=transform)
-        self.val_data = dataset.get_subset("id_val", transform=test_transform)
-        self.test_data = dataset.get_subset("id_test", transform=test_transform)
+        self.memory_data = dataset.get_subset("train", transform=test_transform)
+        self.test_data = dataset.get_subset("id_val", transform=test_transform)
 
         metadataset = dataset.metadata.iloc[np.argwhere((dataset.metadata['split'] != 'seq').values).flatten(), :]
         self.train_dataset = metadataset.iloc[self.train_data.indices]
-        self.val_dataset = metadataset.iloc[self.val_data.indices]
-        self.test_dataset = metadataset.iloc[self.test_data.indices]            
+        self.memory_dataset = metadataset.iloc[self.memory_data.indices]
+        self.test_dataset = metadataset.iloc[self.test_data.indices]       
+
+        self.train_data.targets = self.train_dataset.y.values
+        self.memory_data.targets = self.memory_dataset.y.values
+        self.test_data.targets = self.test_dataset.y.values
 
         super().__init__(args)
 
@@ -74,15 +78,15 @@ class FMOW(ContinualDataset):
         task_train_data = deepcopy(self.train_data)
         task_train_data.indices = self.train_dataset.where(self.train_dataset['region'] == self.REGION_ORDER[self.i]).index.values
 
-        task_val_data = deepcopy(self.val_data)
-        task_val_data.indices = self.val_dataset.where(self.val_dataset['region'] == self.REGION_ORDER[self.i]).index.values
+        task_memory_data = deepcopy(self.memory_data)
+        task_memory_data.indices = self.memory_dataset.where(self.memory_dataset['region'] == self.REGION_ORDER[self.i]).index.values
 
         task_test_data = deepcopy(self.test_data)
         task_test_data.indices = self.test_dataset.where(self.test_dataset['region'] == self.REGION_ORDER[self.i]).index.values
 
         train_loader = get_train_loader("standard", task_train_data, batch_size=self.args.train.batch_size, num_workers=16)
-        memory_loader = get_eval_loader("standard", task_val_data,batch_size=self.args.train.batch_size, num_workers=0)
-        test_loader = get_eval_loader("standard", task_test_data, batch_size=self.args.train.batch_size, num_workers=0)
+        memory_loader = get_eval_loader("standard", task_memory_data, batch_size=self.args.train.batch_size, num_workers=16)
+        test_loader = get_eval_loader("standard", task_test_data, batch_size=self.args.train.batch_size, num_workers=16)
 
         self.test_loaders.append(test_loader)
         self.train_loaders.append(train_loader)

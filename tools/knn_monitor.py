@@ -15,12 +15,13 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
     t_1 = time.time()
     net.eval()
     # classes = len(memory_data_loader.dataset.classes)
-    classes = 100
+    classes = 62
+    # classes = 100
     total_top1 = total_top1_mask = total_top5 = total_num = 0.0
     feature_bank = []
     with torch.no_grad():
         # generate feature bank        
-        for data, target, *meta_args in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=True):
+        for data, target, *meta_args in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=False):
             if cl_default:
                 feature = net(data.cuda(non_blocking=True), return_features=True)
             else:
@@ -36,7 +37,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
         # feature_labels = torch.tensor(memory_data_loader.dataset.targets - np.amin(memory_data_loader.dataset.targets), device=feature_bank.device)
         feature_labels = torch.tensor(memory_data_loader.dataset.targets, device=feature_bank.device)
         # loop test data to predict the label by weighted knn search
-        test_bar = tqdm(test_data_loader, desc='kNN', disable=True)
+        test_bar = tqdm(test_data_loader, desc='kNN', disable=False)
         for data, target, *meta_args in test_bar:
             data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
             if cl_default:

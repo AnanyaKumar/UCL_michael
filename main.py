@@ -32,7 +32,7 @@ from ray import tune
 import wandb
 
 
-def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None) -> Tuple[list, list]:
+def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None, debug=False) -> Tuple[list, list]:
     """
     Evaluates the accuracy of the model for each past task.
     :param model: the model to be evaluated
@@ -47,8 +47,7 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     accs, accs_mask_classes = [], []
     for k, test_loader in enumerate(dataset.test_loaders):
         correct, correct_mask_classes, total = 0.0, 0.0, 0.0
-        for data in test_loader:
-            inputs, labels = data
+        for (inputs, labels, *meta_args) in tqdm(test_loader):
             inputs, labels = inputs.to(device), labels.to(device)
             
             outputs = model.embed(inputs)[0] if fc else model(inputs)
@@ -65,6 +64,8 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
                 mask_classes(outputs, dataset, k)
                 _, pred = torch.max(outputs.data, 1)
                 correct_mask_classes += torch.sum(pred == labels).item()
+
+            if debug and total: break
         
         accs.append(correct / total * 100)
         accs_mask_classes.append(correct_mask_classes / total * 100)
@@ -249,7 +250,7 @@ def trainable(config):
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
           for i in range(len(dataset.test_loaders)):
             
-            acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))             
+            acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
 
             results.append(acc)
             if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
@@ -284,31 +285,31 @@ def trainable(config):
     if not args.train.save_best:
       save_model(model,args,t,epoch,dataset)
     
-    if args.cl_default:
-      old_fcs.append(deepcopy(model.net.backbone.fc))
-      accs = evaluate(model.net.backbone, dataset, device)
-      results.append(accs[0])
-      results_mask_classes.append(accs[1])
-      mean_acc = np.mean(accs, axis=1)
+    # if args.cl_default:
+    #   old_fcs.append(deepcopy(model.net.backbone.fc))
+    #   accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
+    #   results.append(accs[0])
+    #   results_mask_classes.append(accs[1])
+    #   mean_acc = np.mean(accs, axis=1)
 
-      task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs)
-      mean_acc_task_il = np.mean(task_accs,axis=1)
+    #   task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
+    #   mean_acc_task_il = np.mean(task_accs,axis=1)
 
-      if not args.debug_lpft and "tune" in os.environ["logging"]: 
-        tune.report(class_il_mean_acc=mean_acc[0])
-        tune.report(task_il_mean_acc=mean_acc_task_il[1])
-      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-        wandb.log({'class_il_mean_acc': mean_acc[0]})
-        wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
-      if args.debug_lpft:
-        print({'class_il_mean_acc': mean_acc[0]})
-        print({'task_il_mean_acc': mean_acc_task_il[1]})
-      # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
+    #   if not args.debug_lpft and "tune" in os.environ["logging"]: 
+    #     tune.report(class_il_mean_acc=mean_acc[0])
+    #     tune.report(task_il_mean_acc=mean_acc_task_il[1])
+    #   if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+    #     wandb.log({'class_il_mean_acc': mean_acc[0]})
+    #     wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
+    #   if args.debug_lpft:
+    #     print({'class_il_mean_acc': mean_acc[0]})
+    #     print({'task_il_mean_acc': mean_acc_task_il[1]})
+    #   # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
     probe_train_results = []
     probe_results = []
     for i in range(len(dataset.test_loaders)):
-      train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset))) 
+      train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft) 
       probe_results.append(acc)
       probe_train_results.append(train_acc)
       if not args.debug_lpft and "tune" in os.environ["logging"]: 
@@ -374,8 +375,9 @@ def train(args):
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
     "num_lp_epochs": [0, 25],
+    # "knn_interval": [5],
     # "scale": [0.5],
-    # "num_epochs": [260,280,300,320,340,360],
+    # "num_epochs": [50],
     # "proj_is_head": [False],
   }}
     ## RAY TUNE
@@ -389,7 +391,7 @@ def train(args):
       pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":14, "gpu": 1})
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":7, "gpu": 0.5})
     
   
 

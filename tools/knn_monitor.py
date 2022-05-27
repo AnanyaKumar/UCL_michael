@@ -11,7 +11,7 @@ from sklearn.linear_model import LogisticRegression, SGDClassifier
 
 # code copied from https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb#scrollTo=RI1Y8bSImD7N
 # test using a knn monitor
-def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
+def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False, debug=True):
     t_1 = time.time()
     net.eval()
     # classes = len(memory_data_loader.dataset.classes)
@@ -29,6 +29,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
             feature_norm = torch.empty_like(feature)
             F.normalize(feature, dim=1, out=feature_norm)
             feature_bank.append(feature_norm)
+            if debug and len(feature_bank)*feature.shape[0] > 200: break
         t_2 = time.time()
         # print("feature bank generation took", t_2-t_1, "seconds")
         # [D, N]        
@@ -55,9 +56,9 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
             pred_scores = mask_classes(pred_scores, dataset, task_id)
             _, preds = torch.max(pred_scores.data, 1)
             total_top1_mask += torch.sum(preds == target).item()
+            if debug: break
         t_3 = time.time()
         # print("knn test took", t_3-t_1, "seconds")
-
     return total_top1 / total_num * 100, total_top1_mask / total_num * 100
 
 def get_acc(preds, labels):
@@ -110,11 +111,12 @@ def test_log_reg_warm_starting(features, labels, train_index, test_indices, val_
         accs.append(result_row)
     return best_clf, best_coef, best_intercept, best_c, best_i, accs
 
-def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
+def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False, debug=False):
     features_and_labels = []
     features = []
     targets = []
-    for data, target in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=True):        
+    target_set = set()
+    for (data, target, *meta_args) in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=False):        
         if cl_default:
             feature = net(data.cuda(non_blocking=True), return_features=True)
         else:
@@ -122,6 +124,9 @@ def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device,
         feature = feature.detach()
         features.append(feature)
         targets.append(target)
+        target_set |= set(target.numpy().tolist())
+        if debug and len(target_set) > 1:
+            break
 
     feature = torch.cat(features, dim=0)
     label = torch.cat(targets, dim=0)
@@ -130,7 +135,7 @@ def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device,
 
     features = []
     targets = []
-    for data, target in tqdm(test_data_loader, desc='Feature extracting', leave=False, disable=True):        
+    for (data, target, *meta_args) in tqdm(test_data_loader, desc='Feature extracting', leave=False, disable=False):        
         if cl_default:
             feature = net(data.cuda(non_blocking=True), return_features=True)
         else:
@@ -138,6 +143,7 @@ def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device,
         feature = feature.detach()
         features.append(feature)
         targets.append(target)
+        if debug: break
 
     feature = torch.cat(features, dim=0)
     label = torch.cat(targets, dim=0)

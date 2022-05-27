@@ -27,10 +27,14 @@ class FMOW(ContinualDataset):
 
     NAME = 'fmow'
     SETTING = 'class-il'
-    N_CLASSES_PER_TASK = 62
-    N_TASKS = 6
+    N_CLASSES_PER_TASK = 62    
 
     REGION_ORDER = [1, 3, 0, 4, 2, 5]
+    # REGION_ORDER = [5,2,4,0,3,1]
+    YEAR_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    TASK_DEFINITION = "year"
+    N_TASKS = 11
 
     def __init__(self, args):
         dataset = get_dataset(dataset="fmow", root_dir="/u/scr/nlp/wilds/data/", download=False)
@@ -41,6 +45,7 @@ class FMOW(ContinualDataset):
         self.test_data = dataset.get_subset("id_val", transform=test_transform)
 
         metadataset = dataset.metadata.iloc[np.argwhere((dataset.metadata['split'] != 'seq').values).flatten(), :]
+
         self.train_dataset = metadataset.iloc[self.train_data.indices]
         self.memory_dataset = metadataset.iloc[self.memory_data.indices]
         self.test_dataset = metadataset.iloc[self.test_data.indices]       
@@ -76,13 +81,16 @@ class FMOW(ContinualDataset):
    
     def get_data_loaders(self, args):
         task_train_data = deepcopy(self.train_data)
-        task_train_data.indices = self.train_dataset.where(self.train_dataset['region'] == self.REGION_ORDER[self.i]).index.values
+        task_train_data.indices = self.train_dataset[self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
+        task_train_data.targets = self.train_dataset[self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
 
         task_memory_data = deepcopy(self.memory_data)
-        task_memory_data.indices = self.memory_dataset.where(self.memory_dataset['region'] == self.REGION_ORDER[self.i]).index.values
+        task_memory_data.indices = self.memory_dataset[self.memory_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
+        task_memory_data.targets = self.memory_dataset[self.memory_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
 
         task_test_data = deepcopy(self.test_data)
-        task_test_data.indices = self.test_dataset.where(self.test_dataset['region'] == self.REGION_ORDER[self.i]).index.values
+        task_test_data.indices = self.test_dataset[self.test_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
+        task_test_data.targets = self.test_dataset[self.test_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
 
         train_loader = get_train_loader("standard", task_train_data, batch_size=self.args.train.batch_size, num_workers=16)
         memory_loader = get_eval_loader("standard", task_memory_data, batch_size=self.args.train.batch_size, num_workers=16)

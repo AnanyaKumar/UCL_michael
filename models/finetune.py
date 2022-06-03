@@ -11,7 +11,6 @@ class Finetune(ContinualModel):
         super(Finetune, self).__init__(backbone, loss, args, len_train_loader, transform)
 
     def observe(self, inputs1, labels, inputs2, notaug_inputs):
-
         self.opt.zero_grad()
         if self.args.cl_default:
             labels = labels.to(self.device)

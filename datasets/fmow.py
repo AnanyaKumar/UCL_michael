@@ -33,8 +33,8 @@ class FMOW(ContinualDataset):
     # REGION_ORDER = [5,2,4,0,3,1]
     YEAR_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-    TASK_DEFINITION = "year"
-    N_TASKS = 11
+    TASK_DEFINITION = "region"
+    N_TASKS = 6
 
     def __init__(self, args):
         dataset = get_dataset(dataset="fmow", root_dir="/u/scr/nlp/wilds/data/", download=False)
@@ -79,22 +79,33 @@ class FMOW(ContinualDataset):
 
 
    
-    def get_data_loaders(self, args):
+    def get_data_loaders(self, args, divide_tasks=False):
         task_train_data = deepcopy(self.train_data)
-        task_train_data.indices = self.train_dataset[self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
-        task_train_data.targets = self.train_dataset[self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
+        mask = self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i] if divide_tasks else np.full((len(self.train_dataset),), True)
+        indices = self.train_dataset[mask].index.values
+        # if args.debug: indices = np.random.permutation(indices)[:args.train.batch_size]
+        task_train_data.indices = indices                
+        task_train_data.targets = self.train_dataset[mask].y.values
 
         task_memory_data = deepcopy(self.memory_data)
-        task_memory_data.indices = self.memory_dataset[self.memory_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
-        task_memory_data.targets = self.memory_dataset[self.memory_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
+        mask = self.memory_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]
+        indices = self.memory_dataset[mask].index.values
+        # if args.debug: indices = np.random.permutation(indices)[:args.train.batch_size]
+        task_memory_data.indices = indices                
+        task_memory_data.targets = self.memory_dataset[mask].y.values
 
         task_test_data = deepcopy(self.test_data)
-        task_test_data.indices = self.test_dataset[self.test_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].index.values
-        task_test_data.targets = self.test_dataset[self.test_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]].y.values
+        mask = self.test_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i]
+        indices = self.test_dataset[mask].index.values
+        # if args.debug: indices = np.random.permutation(indices)[:args.train.batch_size]
+        task_test_data.indices = indices                
+        task_test_data.targets = self.test_dataset[mask].y.values
 
-        train_loader = get_train_loader("standard", task_train_data, batch_size=self.args.train.batch_size, num_workers=16)
-        memory_loader = get_eval_loader("standard", task_memory_data, batch_size=self.args.train.batch_size, num_workers=16)
-        test_loader = get_eval_loader("standard", task_test_data, batch_size=self.args.train.batch_size, num_workers=16)
+        num_workers = 0 if args.debug else 0
+
+        train_loader = get_train_loader("standard", task_train_data, batch_size=self.args.train.batch_size, num_workers=num_workers)
+        memory_loader = get_eval_loader("standard", task_memory_data, batch_size=self.args.train.batch_size//8, num_workers=num_workers)
+        test_loader = get_eval_loader("standard", task_test_data, batch_size=self.args.train.batch_size//8, num_workers=num_workers)
 
         self.test_loaders.append(test_loader)
         self.train_loaders.append(train_loader)

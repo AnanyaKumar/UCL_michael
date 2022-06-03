@@ -19,6 +19,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
     # classes = 100
     total_top1 = total_top1_mask = total_top5 = total_num = 0.0
     feature_bank = []
+    print("knn cuda allocated", torch.cuda.memory_allocated())
     with torch.no_grad():
         # generate feature bank        
         for data, target, *meta_args in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=False):
@@ -28,6 +29,7 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
                 feature = net(data.cuda(non_blocking=True))
             feature_norm = torch.empty_like(feature)
             F.normalize(feature, dim=1, out=feature_norm)
+            feature_norm = feature_norm.detach().cpu()
             feature_bank.append(feature_norm)
             if debug and len(feature_bank)*feature.shape[0] > 200: break
         t_2 = time.time()
@@ -40,14 +42,15 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
         # loop test data to predict the label by weighted knn search
         test_bar = tqdm(test_data_loader, desc='kNN', disable=False)
         for data, target, *meta_args in test_bar:
-            data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            data = data.cuda(non_blocking=True)
             if cl_default:
                 feature = net(data, return_features=True)
             else:
                 feature = net(data)
             feature = F.normalize(feature, dim=1)
-            
+            feature = feature.detach().cpu()
             pred_scores = knn_predict(feature, feature_bank, feature_labels, classes, k, t)
+            pred_scores
 
             total_num += data.shape[0]
             _, preds = torch.max(pred_scores.data, 1)

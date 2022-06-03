@@ -21,6 +21,20 @@ $ pip install -r requirements.txt
 ```
 
 ## Run
+
+To debug any of these, add --debug --debug_lpft
+To do lpft, add --lpft
+
+* __FMOW_v1.1__ all task data supervised experiment
+```
+$ python main.py --data_dir ../Data/ --log_dir ../logs/ -c configs/finetune_fmow_scl.yaml --ckpt_dir ./checkpoints/fmow_results/ --hide_progress --cl_default
+```
+
+* __FMOW_v1.1__ all task data unsupervised experiment with SimSiam
+```
+$ python main.py --data_dir ../Data/ --log_dir ../logs/ -c configs/simsiam_fmow.yaml --ckpt_dir ./checkpoints/fmow_results/ --hide_progress
+```
+
 * __Split CIFAR-10__ experiment with SimSiam
 ```
 $ python main.py --data_dir ../Data/ --log_dir ../logs/ -c configs/simsiam_c10.yaml --ckpt_dir ./checkpoints/cifar10_results/ --hide_progress

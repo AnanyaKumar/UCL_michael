@@ -4,7 +4,12 @@ from .simsiam import SimSiam
 from .barlowtwins import BarlowTwins
 from torchvision.models import resnet50, resnet18, resnet34, resnet101, resnet152
 import torch
+from types import FunctionType as ftype
 from .backbones import resnet18
+
+swav = torch.hub.load('facebookresearch/swav:main', 'resnet50')
+densenet121 = torch.hub.load('pytorch/vision:v0.10.0', 'densenet121', pretrained=True)
+
 
 
 def get_num_params(model, is_trainable = None):
@@ -23,14 +28,17 @@ def get_num_params(model, is_trainable = None):
     return num_params
 
 def get_backbone(backbone, dataset, castrate=True):
-    backbone = eval(f"{backbone}()")
+    backbone = eval(f"{backbone}")
+    if type(backbone) == ftype:
+        backbone = backbone()
     if dataset == 'seq-cifar100':
         backbone.n_classes = 100
     elif dataset == 'seq-cifar10':
         backbone.n_classes = 10
-    backbone.output_dim = backbone.fc.in_features
+    backbone.output_dim = (backbone.fc if hasattr(backbone, "fc") else backbone.classifier).in_features
     if not castrate:
-        backbone.fc = torch.nn.Identity()
+        if hasattr(backbone, "fc"): backbone.fc = torch.nn.Identity()
+        else: backbone.classifier = torch.nn.Identity()
 
     return backbone
 

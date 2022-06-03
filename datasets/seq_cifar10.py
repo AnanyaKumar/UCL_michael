@@ -40,7 +40,7 @@ class SequentialCIFAR10(ContinualDataset):
         else:
             test_dataset = CIFAR10(base_path() + 'CIFAR10',train=False,
                                    download=True, transform=test_transform)
-
+        
         train, memory, test = store_masked_loaders(train_dataset, test_dataset, memory_dataset, self)
         return train, memory, test
     

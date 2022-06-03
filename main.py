@@ -31,6 +31,45 @@ import os
 from ray import tune
 import wandb
 
+def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, end_task=True):
+  probe_train_results = []
+  probe_results = []
+  for i in range(len(dataset.test_loaders)):
+    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft) 
+    probe_results.append(acc)
+    probe_train_results.append(train_acc)
+    if not args.debug_lpft and "tune" in os.environ["logging"]: 
+      tune.report(**{f"probe_acc_task_{i+1}": acc})
+      tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
+      tune.report(**{f"probe_best_c_{i+1}": best_c})
+    if args.debug_lpft:
+      print({f"probe_acc_task_{i+1}": acc})
+      print({f"probe_train_acc_task_{i+1}": train_acc})
+      print({f"probe_best_c_{i+1}": best_c})
+    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+      wandb.log({f"probe_acc_task_{i+1}": acc})
+      wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
+      wandb.log({f"probe_best_c_{i+1}": best_c})  
+
+  if end_task:    
+    all_probe_results.append(probe_results)
+    all_probe_train_results.append(probe_train_results)
+    if args.train.naive:
+      mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
+      mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
+    else:
+      mean_acc = np.mean(probe_results)
+      mean_train_acc = np.mean(probe_train_results)
+    if not args.debug_lpft and "tune" in os.environ["logging"]: 
+      tune.report(**{f"probe_train_mean_acc": mean_train_acc})
+      tune.report(**{f"probe_mean_acc": mean_acc})
+    if args.debug_lpft:
+      print({f"probe_mean_acc": mean_acc})
+      print({f"probe_train_mean_acc": mean_train_acc})
+    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+      wandb.log({f"probe_mean_acc": mean_acc})
+      wandb.log({f"probe_train_mean_acc": mean_train_acc})
+
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None, debug=False) -> Tuple[list, list]:
     """
@@ -180,9 +219,12 @@ def trainable(config):
       args["aug_kwargs"][k] = v
   
   args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
-    
-  os.environ['logging'] = "wandb,tune"
-  if not args['debug_lpft']:
+  
+  if args['train'].disable_logging:
+    os.environ['logging'] = ""
+  else:
+    os.environ['logging'] = "wandb,tune"
+  if not args['debug_lpft'] and "tune" in os.environ["logging"]:
     wandb.init(project="lpft", config=vars(args['train']))
     
   args = init_args(args)
@@ -224,7 +266,13 @@ def trainable(config):
       print("continuing cause only train last task...")
       continue
 
-    global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
+    if args.train.eternal_last_task and t == dataset.N_TASKS - 1:
+      global_progress = tqdm(range(0, args.train.eternal_last_task), desc=f'Training last')
+    else:
+      global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
+
+    print("at start of task, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))
+    epoch = 0
     for epoch in global_progress:   
       if args.lpft and (not args.train.ft_first or t):    
         freeze_weights(model, args, only_log=epoch)          
@@ -238,18 +286,26 @@ def trainable(config):
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
 
+      print(f"before training batch in epoch {epoch}, cuda allocated", torch.cuda.memory_allocated())
+
       for idx, ((images1, images2, notaug_images), labels, *meta_args) in enumerate(local_progress):
-          data_dict = model.observe(images1, labels, images2, notaug_images)
-          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
-          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
-          if args.debug_lpft:
-            break
+        data_dict = model.observe(images1, labels, images2, notaug_images)
+        if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
+        if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
+        if idx == 0:
+          print("after first batch, cuda allocated", torch.cuda.memory_allocated())        
+        elif idx == 1:
+          print("after second batch, cuda allocated", torch.cuda.memory_allocated())        
+          if args.debug_lpft: break
+      
 
       global_progress.set_postfix(data_dict)
+      del data_dict
+
+      print(f"after looping all batches in epoch {epoch}, cuda allocated", torch.cuda.memory_allocated())
 
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
           for i in range(len(dataset.test_loaders)):
-            
             acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
 
             results.append(acc)
@@ -269,22 +325,25 @@ def trainable(config):
           if args.debug_lpft:
             print({f"knn_mean_acc": mean_acc})
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
-
-
-        
-      epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
-      print("mean_accuracy:", mean_acc)
-      global_progress.set_postfix(epoch_dict)
-      logger.update_scalers(epoch_dict)
+                
+          epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+          print("mean_accuracy:", mean_acc)
+          global_progress.set_postfix(epoch_dict)
+          logger.update_scalers(epoch_dict)
 
       if args.train.save_best and results[-1] > best_current_task:
         print(f"{results[-1]} beats {best_current_task}, saving model...")
         best_current_task = results[-1]
         save_model(model,args,t,epoch,dataset)
 
+      if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
+        probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, end_task=False)
+
     if not args.train.save_best:
       save_model(model,args,t,epoch,dataset)
     
+    ## BELOW for task-il evaluation, not including for domain-il
+
     # if args.cl_default:
     #   old_fcs.append(deepcopy(model.net.backbone.fc))
     #   accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
@@ -306,42 +365,8 @@ def trainable(config):
     #     print({'task_il_mean_acc': mean_acc_task_il[1]})
     #   # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
-    probe_train_results = []
-    probe_results = []
-    for i in range(len(dataset.test_loaders)):
-      train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft) 
-      probe_results.append(acc)
-      probe_train_results.append(train_acc)
-      if not args.debug_lpft and "tune" in os.environ["logging"]: 
-        tune.report(**{f"probe_acc_task_{i+1}": acc})
-        tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
-        tune.report(**{f"probe_best_c_{i+1}": best_c})
-      if args.debug_lpft:
-        print({f"probe_acc_task_{i+1}": acc})
-        print({f"probe_train_acc_task_{i+1}": train_acc})
-        print({f"probe_best_c_{i+1}": best_c})
-      if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-        wandb.log({f"probe_acc_task_{i+1}": acc})
-        wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
-        wandb.log({f"probe_best_c_{i+1}": best_c})
-    all_probe_results.append(probe_results)
-    all_probe_train_results.append(probe_train_results)
-      
-    if args.train.naive:
-      mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
-      mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
-    else:
-      mean_acc = np.mean(probe_results)
-      mean_train_acc = np.mean(probe_train_results)
-    if not args.debug_lpft and "tune" in os.environ["logging"]: 
-      tune.report(**{f"probe_train_mean_acc": mean_train_acc})
-      tune.report(**{f"probe_mean_acc": mean_acc})
-    if args.debug_lpft:
-      print({f"probe_mean_acc": mean_acc})
-      print({f"probe_train_mean_acc": mean_train_acc})
-    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-      wandb.log({f"probe_mean_acc": mean_acc})
-      wandb.log({f"probe_train_mean_acc": mean_train_acc})
+    if not args.train.eternal_last_task or t == dataset.N_TASKS - 1:
+      probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results)
       
 
 
@@ -369,15 +394,21 @@ def train(args):
     # "naive": [True, False],
     # "cl_default": [False],
     # "warmup_epochs": [10],
-    # "warmup_lr": [0],
-    # "lp_lr": [0.03],
+    # "warmup_lr": [0],    
     # "ft_lr": [0.01],
     # "grad_thresh": [0.],
     # "grad_by_layer": [True],
-    "num_lp_epochs": [0, 25],
+    # "num_lp_epochs": [0],
+    # "ft_lr": [0.03],
+    # "top_k": [10, 20, 50, 100],
+    "knn_monitor": [False],
+    # "probe_monitor": [True],
+    # "probe_interval": [5],
+    "eternal_last_task": [1000],
+    # "disable_logging": [False],
     # "knn_interval": [5],
     # "scale": [0.5],
-    # "num_epochs": [50],
+    "num_epochs": [0],
     # "proj_is_head": [False],
   }}
     ## RAY TUNE
@@ -391,8 +422,9 @@ def train(args):
       pdb.post_mortem()
   else:
     config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
-    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":7, "gpu": 0.5})
-    
+    tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu":32, "gpu": 1})
+
+
   
 
 

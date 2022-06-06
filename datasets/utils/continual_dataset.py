@@ -108,15 +108,16 @@ def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory
         np.array(train_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
     test_mask = np.logical_and(np.array(test_dataset.targets) >= setting.i,
         np.array(test_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
-    
     train_dataset.data = train_dataset.data[train_mask]
     test_dataset.data = test_dataset.data[test_mask]
 
     train_dataset.targets = np.array(train_dataset.targets)[train_mask]
     test_dataset.targets = np.array(test_dataset.targets)[test_mask]
 
-    memory_dataset.data = memory_dataset.data[train_mask]
-    memory_dataset.targets = np.array(memory_dataset.targets)[train_mask]
+    memory_mask = np.logical_and(np.array(memory_dataset.targets) >= setting.i,
+        np.array(memory_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
+    memory_dataset.data = memory_dataset.data[memory_mask]
+    memory_dataset.targets = np.array(memory_dataset.targets)[memory_mask]
 
     train_loader = DataLoader(train_dataset,
                               batch_size=setting.args.train.batch_size, shuffle=True, num_workers=4)
@@ -124,7 +125,6 @@ def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory
                              batch_size=setting.args.train.batch_size, shuffle=False, num_workers=4)
     memory_loader = DataLoader(memory_dataset,
                               batch_size=setting.args.train.batch_size, shuffle=False, num_workers=4)
-
     setting.test_loaders.append(test_loader)
     setting.train_loaders.append(train_loader)
     setting.memory_loaders.append(memory_loader)

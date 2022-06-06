@@ -7,12 +7,21 @@ import torch
 from .backbones import resnet18, resnet152
 # I'm guessing they might use the torch resnet50 for tinyimagenet, so not importing resnet50 from backbones. 
 
-def get_backbone(backbone, dataset, castrate=True):
-    backbone = eval(f"{backbone}()")
+def get_backbone(backbone, dataset, castrate=True, args=None):
     if dataset == 'seq-cifar100':
-        backbone.n_classes = 100
+        # Each task in split cifar only has 5 classes.
+        # But their data loaders don't modify the labels to 5-way classification.
+        # They just keep the labels between 0 and 99.
+        n_classes = 100
     elif dataset == 'seq-cifar10':
-        backbone.n_classes = 10
+        n_classes = 10
+    else:
+        n_classes = 100
+    if args is not None and 'group_norm_num_groups' in args.model.__dict__:
+        norm_layer = lambda c: torch.nn.GroupNorm(args.mode.group_norm_num_groups, c)
+        backbone = eval(f"{backbone}(num_classes={n_classes}, norm_layer=norm_layer)")
+    else:
+        backbone = eval(f"{backbone}(num_classes={n_classes})")
     backbone.output_dim = backbone.fc.in_features
     if not castrate:
         backbone.fc = torch.nn.Identity()
@@ -26,7 +35,7 @@ def get_all_models():
     else:
         models_dir = os.listdir('../models')
     return [model.split('.')[0] for model in models_dir
-            if not model.find('__') > -1 and 'py' in model]
+            if not model.find('__') > -1 and 'py' in model and 'swp' not in model]
 
 def get_model(args, device, len_train_loader, transform):
     loss = torch.nn.CrossEntropyLoss()
@@ -40,6 +49,7 @@ def get_model(args, device, len_train_loader, transform):
             backbone.projector.set_layers(args.model.proj_layers)
 
     names = {}
+    print(get_all_models())
     for model in get_all_models():
         mod = importlib.import_module('models.' + model)
         class_name = {x.lower():x for x in mod.__dir__()}[model.replace('_', '')]

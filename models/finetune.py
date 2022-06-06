@@ -1,7 +1,9 @@
 from utils.buffer import Buffer
+import torch
 from torch.nn import functional as F
 from models.utils.continual_model import ContinualModel
 from augmentations import get_aug
+import numpy as np
 
 class Finetune(ContinualModel):
     NAME = 'finetune'
@@ -19,6 +21,10 @@ class Finetune(ContinualModel):
             loss = self.loss(outputs, labels).mean()
             data_dict = {'loss': loss}
             data_dict['penalty'] = 0.0
+            _, predicted = torch.max(outputs, dim=1)
+            predicted = predicted.detach().cpu().numpy()
+            labels = labels.detach().cpu().numpy()
+            data_dict['num_correct'] = np.sum(predicted == labels)
         else:
             data_dict = self.net.forward(inputs1.to(self.device, non_blocking=True), inputs2.to(self.device, non_blocking=True))
             data_dict['loss'] = data_dict['loss'].mean()

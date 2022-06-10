@@ -97,7 +97,7 @@ class ContinualDataset:
 
 
 def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory_dataset: datasets, 
-                    setting: ContinualDataset) -> Tuple[DataLoader, DataLoader]:
+                    setting: ContinualDataset, divide_tasks=True) -> Tuple[DataLoader, DataLoader]:
     """
     masks train_dataset, memory_dataset, and test_dataset, to only an additional number of classes per task
     then increments setting.i (ContinualDataset) by number classes of task i
@@ -113,9 +113,10 @@ def store_masked_loaders(train_dataset: datasets, test_dataset: datasets, memory
 
     train_mask = np.logical_and(np.array(train_dataset.targets) >= setting.i,
         np.array(train_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
+    if not divide_tasks: train_mask |= True
     test_mask = np.logical_and(np.array(test_dataset.targets) >= setting.i,
         np.array(test_dataset.targets) < setting.i + setting.N_CLASSES_PER_TASK)
-    
+    if not divide_tasks: test_mask |= True
     
     train_dataset.data = train_dataset.data[train_mask]
     test_dataset.data = test_dataset.data[test_mask]

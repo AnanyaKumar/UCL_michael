@@ -234,7 +234,7 @@ def trainable(config):
 
   dataset = get_dataset(args)
   dataset_copy = get_dataset(args)
-  train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
+  train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
 
   # define model
   model = get_model(args, device, len(train_loader), dataset.get_transform(args))
@@ -261,13 +261,13 @@ def trainable(config):
 
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
-    train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
+    train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
     if args.last and t < 4: 
       print("continuing cause only train last task...")
       continue
 
-    if args.train.eternal_last_task and t == dataset.N_TASKS - 1:
-      global_progress = tqdm(range(0, args.train.eternal_last_task), desc=f'Training last')
+    if args.train.all_tasks_num_epochs and t == dataset.N_TASKS - 1:
+      global_progress = tqdm(range(0, args.train.all_tasks_num_epochs), desc=f'Training last')
     else:
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
 
@@ -365,7 +365,7 @@ def trainable(config):
     #     print({'task_il_mean_acc': mean_acc_task_il[1]})
     #   # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
-    if not args.train.eternal_last_task or t == dataset.N_TASKS - 1:
+    if not args.train.all_tasks_num_epochs or t == dataset.N_TASKS - 1:
       probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results)
       
 
@@ -404,7 +404,7 @@ def train(args):
     "knn_monitor": [False],
     # "probe_monitor": [True],
     # "probe_interval": [5],
-    "eternal_last_task": [1000],
+    "all_tasks_num_epochs": [1000],
     # "disable_logging": [False],
     # "knn_interval": [5],
     # "scale": [0.5],

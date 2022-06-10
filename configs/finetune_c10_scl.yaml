@@ -30,6 +30,7 @@ train:
   freeze_include_head: False
   num_lp_epochs: 25
   num_epochs: 50 # this parameter influence the lr decay
+  all_tasks_num_epochs: 0
   stop_at_epoch: 50 # has to be smaller than num_epochs
   ft_first: False
   train_first: False

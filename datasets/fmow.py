@@ -79,7 +79,7 @@ class FMOW(ContinualDataset):
 
 
    
-    def get_data_loaders(self, args, divide_tasks=False):
+    def get_data_loaders(self, args, divide_tasks=True):
         task_train_data = deepcopy(self.train_data)
         mask = self.train_dataset[self.TASK_DEFINITION] == (self.REGION_ORDER if self.TASK_DEFINITION == "region" else self.YEAR_ORDER)[self.i] if divide_tasks else np.full((len(self.train_dataset),), True)
         indices = self.train_dataset[mask].index.values

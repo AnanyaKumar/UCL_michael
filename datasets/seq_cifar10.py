@@ -25,7 +25,7 @@ class SequentialCIFAR10(ContinualDataset):
     N_CLASSES_PER_TASK = 2
     N_TASKS = 5
    
-    def get_data_loaders(self, args):
+    def get_data_loaders(self, args, divide_tasks=True):
         transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
 

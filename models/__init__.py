@@ -51,9 +51,9 @@ def get_model(args, device, len_train_loader, transform):
     loss = torch.nn.CrossEntropyLoss()
     if args.model.name == 'simsiam':
         backbone =  SimSiam(get_backbone(args.model.backbone, args.dataset.name, args.cl_default)).to(device)
-        for class_ in [resnet18, resnet34, resnet50, resnet101, resnet152]:            
-            backbone_ = class_()
-            print(f"{class_.__name__} has {get_num_params(backbone_)} params")
+        for class_ in [resnet18, resnet34, resnet50, resnet101, resnet152, densenet121, swav]:            
+            backbone_ = class_() if type(class_) == ftype else class_
+            print(f"{backbone_.__class__} has {get_num_params(backbone_)} params")
         if args.model.proj_layers is not None:
             backbone.projector.set_layers(args.model.proj_layers)
     elif args.model.name == 'barlowtwins':

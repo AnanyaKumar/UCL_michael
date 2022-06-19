@@ -102,8 +102,8 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
           correct += torch.sum(pred == labels).item()
           total += labels.shape[0]
 
-          if dataset.SETTING == 'class-il':         
-            mask_classes(outputs, dataset, k)
+          if dataset.SETTING == 'class-il' or dataset.SETTING == 'domain-il':              
+            mask_classes(outputs, dataset, k if dataset.SETTING == 'class-il' else 0)
             _, pred = torch.max(outputs.data, 1)
             correct_mask_classes += torch.sum(pred == labels).item()
 

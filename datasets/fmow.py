@@ -21,12 +21,13 @@ from PIL import Image
 from wilds import get_dataset
 from wilds.common.data_loaders import get_train_loader, get_eval_loader
 from copy import deepcopy
+import socket
 
 
 class FMOW(ContinualDataset):
 
     NAME = 'fmow'
-    SETTING = 'class-il'
+    SETTING = 'domain-il'
     N_CLASSES_PER_TASK = 62    
 
     REGION_ORDER = [1, 3, 0, 4, 2, 5]
@@ -37,7 +38,7 @@ class FMOW(ContinualDataset):
     N_TASKS = 6
 
     def __init__(self, args):
-        dataset = get_dataset(dataset="fmow", root_dir="/u/scr/nlp/wilds/data/", download=False)
+        dataset = get_dataset(dataset="fmow", root_dir=f"/{socket.gethostname().split('.')[0]}/scr0/msun415/", download=False)
         transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
         self.train_data = dataset.get_subset("train", transform=transform)

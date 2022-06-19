@@ -16,7 +16,7 @@ train:
   cl_default: True
   optimizer: 
     name: sgd
-    weight_decay: 0.0005
+    weight_decay: 0.0
     momentum: 0.9
   save_best: False
   naive: False
@@ -24,8 +24,8 @@ train:
   warmup_lr: 0
   base_lr: 0.03
   final_lr: 0
-  ft_lr: 0.03
-  lp_lr: 0.03
+  ft_lr: 0.0008
+  lp_lr: 0.0008
   grad_thresh: -1.
   grad_by_layer: False
   freeze_include_head: False
@@ -37,7 +37,7 @@ train:
   train_first: False
   reset_lp_lr: True
   lp_epoch_frac: 0.5
-  batch_size: 256
+  batch_size: 32
   knn_monitor: True # knn monitor will take more time
   knn_interval: 1
   probe_monitor: True

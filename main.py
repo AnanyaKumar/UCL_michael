@@ -14,7 +14,7 @@ from sklearn.model_selection import ParameterGrid
 
 from arguments import get_args, update_args, init_args
 from augmentations import get_aug
-from models import get_model, get_num_params
+from models import get_model, get_num_params, get_head, get_features
 from tools import AverageMeter, knn_monitor, probe_monitor, logistic_monitor, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
@@ -85,29 +85,32 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
     model.eval()
     accs, accs_mask_classes = [], []
     for k, test_loader in enumerate(dataset.test_loaders):
-        correct, correct_mask_classes, total = 0.0, 0.0, 0.0
-        for (inputs, labels, *meta_args) in tqdm(test_loader):
-            inputs, labels = inputs.to(device), labels.to(device)
-            
-            outputs = model.embed(inputs)[0] if fc else model(inputs)
-            if classifier is not None:
-              outputs = classifier(outputs)
-            elif fc is not None:
-              outputs = fc[k](outputs)
+      correct, correct_mask_classes, total = 0.0, 0.0, 0.0
+      for (inputs, labels, *meta_args) in tqdm(test_loader):
+          inputs, labels = inputs.to(device), labels.to(device)            
+          if fc:             
+            outputs = get_features(model, inputs)
+          else:
+            outputs = model(inputs)
+          
+          if classifier is not None:
+            outputs = classifier(outputs)
+          elif fc is not None:
+            outputs = fc[k](outputs)
 
+          _, pred = torch.max(outputs.data, 1)
+          correct += torch.sum(pred == labels).item()
+          total += labels.shape[0]
+
+          if dataset.SETTING == 'class-il':         
+            mask_classes(outputs, dataset, k)
             _, pred = torch.max(outputs.data, 1)
-            correct += torch.sum(pred == labels).item()
-            total += labels.shape[0]
+            correct_mask_classes += torch.sum(pred == labels).item()
 
-            if dataset.SETTING == 'class-il':
-                mask_classes(outputs, dataset, k)
-                _, pred = torch.max(outputs.data, 1)
-                correct_mask_classes += torch.sum(pred == labels).item()
-
-            if debug and total: break
-        
-        accs.append(correct / total * 100)
-        accs_mask_classes.append(correct_mask_classes / total * 100)
+          if debug and total: break
+      
+      accs.append(correct / total * 100)
+      accs_mask_classes.append(correct_mask_classes / total * 100)
 
     model.train(status)
     return accs, accs_mask_classes
@@ -211,14 +214,18 @@ def trainable(config):
   
   args = config["default_args"]
   device = args["device"]
-
+  
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
+
+
 
     if k in args["aug_kwargs"]:
       args["aug_kwargs"][k] = v
   
   args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
+
+  assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor
   
   if args['train'].disable_logging:
     os.environ['logging'] = ""
@@ -267,11 +274,12 @@ def trainable(config):
       continue
 
     if args.train.all_tasks_num_epochs and t == dataset.N_TASKS - 1:
-      global_progress = tqdm(range(0, args.train.all_tasks_num_epochs), desc=f'Training last')
+      global_progress = tqdm(range(0, args.train.all_tasks_num_epochs), desc=f'Training all tasks')
     else:
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
 
     print("at start of task, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))
+
     epoch = 0
     for epoch in global_progress:   
       if args.lpft and (not args.train.ft_first or t):    
@@ -281,8 +289,7 @@ def trainable(config):
       if not args.train.train_first or not t:
         model.train()
       else:
-        model.eval()
-      results, results_mask_classes = [], []
+        model.eval()      
       
       local_progress=tqdm(train_loader, desc=f'Epoch {epoch}/{args.train.num_epochs}', disable=args.hide_progress)
 
@@ -290,6 +297,7 @@ def trainable(config):
 
       for idx, ((images1, images2, notaug_images), labels, *meta_args) in enumerate(local_progress):
         data_dict = model.observe(images1, labels, images2, notaug_images)
+
         if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
         if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
         if idx == 0:
@@ -299,37 +307,39 @@ def trainable(config):
           if args.debug_lpft: break
       
 
+
       global_progress.set_postfix(data_dict)
       del data_dict
 
-      print(f"after looping all batches in epoch {epoch}, cuda allocated", torch.cuda.memory_allocated())
+      print(f"after looping all batches in epoch {epoch}, cuda allocated", torch.cuda.memory_allocated())           
 
       if args.train.knn_monitor and epoch % args.train.knn_interval == 0: 
-          for i in range(len(dataset.test_loaders)):
-            acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
+        results, results_mask_classes = [], []
+        for i in range(len(dataset.test_loaders)):
+          acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
 
-            results.append(acc)
-            if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
-            if args.debug_lpft:
-              print({f"knn_acc_task_{i+1}": acc})
-            if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
-          if not epoch:
-            all_task_results.append(results)
-          else:
-            all_task_results[-1] = results
-          if args.train.naive:
-            mean_acc = np.mean([all_task_results[i][i] for i in range(len(dataset.test_loaders))])
-          else:
-            mean_acc = np.mean(results)
-          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
+          results.append(acc)
+          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
           if args.debug_lpft:
-            print({f"knn_mean_acc": mean_acc})
-          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
-                
-          epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
-          print("mean_accuracy:", mean_acc)
-          global_progress.set_postfix(epoch_dict)
-          logger.update_scalers(epoch_dict)
+            print({f"knn_acc_task_{i+1}": acc})
+          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
+        if not epoch:
+          all_task_results.append(results)
+        else:
+          all_task_results[-1] = results
+        if args.train.naive:
+          mean_acc = np.mean([all_task_results[i][i] for i in range(len(dataset.test_loaders))])
+        else:
+          mean_acc = np.mean(results)
+        if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
+        if args.debug_lpft:
+          print({f"knn_mean_acc": mean_acc})
+        if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_mean_acc": mean_acc})
+              
+        epoch_dict = {"epoch":epoch, "accuracy": mean_acc}
+        print("mean_accuracy:", mean_acc)
+        global_progress.set_postfix(epoch_dict)
+        logger.update_scalers(epoch_dict)
 
       if args.train.save_best and results[-1] > best_current_task:
         print(f"{results[-1]} beats {best_current_task}, saving model...")
@@ -339,33 +349,41 @@ def trainable(config):
       if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
         probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, end_task=False)
 
+      ## BELOW for task-il evaluation, not including for domain-il
+
+      if args.cl_default:  
+        old_fcs.append(deepcopy(get_head(model.net.backbone)))      
+        accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
+        # results_mask_classes.append(accs[1])
+        mean_acc = accs[0]
+        if args.train.all_tasks_num_epochs > 0:
+          # use the last fc each test task         
+          old_fcs = [old_fcs[-1] for _ in range(dataset.N_TASKS)]
+        task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
+        mean_acc_task_il = np.mean(task_accs,axis=1)
+
+        if not args.debug_lpft and "tune" in os.environ["logging"]: 
+          tune.report(class_il_mean_acc=mean_acc[0])
+          tune.report(task_il_mean_acc=mean_acc_task_il[1])
+          for i in range(len(task_accs)):
+            tune.report(**{f"task_acc_{i}": task_accs[1][i]})
+        if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+          wandb.log({'class_il_mean_acc': mean_acc[0]})
+          wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
+          for i in range(len(task_accs)):
+            wandb.log({f'task_il_acc_{i}': task_accs[1][i]})
+        if args.debug_lpft:
+          print({'class_il_mean_acc': mean_acc[0]})
+          print({'task_il_mean_acc': mean_acc_task_il[1]})
+        # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
+
+
     if not args.train.save_best:
       save_model(model,args,t,epoch,dataset)
     
-    ## BELOW for task-il evaluation, not including for domain-il
-
-    # if args.cl_default:
-    #   old_fcs.append(deepcopy(model.net.backbone.fc))
-    #   accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
-    #   results.append(accs[0])
-    #   results_mask_classes.append(accs[1])
-    #   mean_acc = np.mean(accs, axis=1)
-
-    #   task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
-    #   mean_acc_task_il = np.mean(task_accs,axis=1)
-
-    #   if not args.debug_lpft and "tune" in os.environ["logging"]: 
-    #     tune.report(class_il_mean_acc=mean_acc[0])
-    #     tune.report(task_il_mean_acc=mean_acc_task_il[1])
-    #   if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-    #     wandb.log({'class_il_mean_acc': mean_acc[0]})
-    #     wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
-    #   if args.debug_lpft:
-    #     print({'class_il_mean_acc': mean_acc[0]})
-    #     print({'task_il_mean_acc': mean_acc_task_il[1]})
-    #   # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
     if not args.train.all_tasks_num_epochs or t == dataset.N_TASKS - 1:
+      # always do a probe evaluate at end of task
       probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results)
       
 
@@ -402,7 +420,7 @@ def train(args):
     # "ft_lr": [0.03],
     # "top_k": [10, 20, 50, 100],
     "knn_monitor": [False],
-    # "probe_monitor": [True],
+    "probe_monitor": [False],
     # "probe_interval": [5],
     "all_tasks_num_epochs": [1000],
     # "disable_logging": [False],

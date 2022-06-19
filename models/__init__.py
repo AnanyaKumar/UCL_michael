@@ -10,7 +10,17 @@ from .backbones import resnet18
 swav = torch.hub.load('facebookresearch/swav:main', 'resnet50')
 densenet121 = torch.hub.load('pytorch/vision:v0.10.0', 'densenet121', pretrained=True)
 
+def get_head(backbone):
+    if hasattr(backbone, "fc"):
+        return backbone.fc 
+    else:
+        return backbone.classifier
 
+def get_features(model, inputs):
+    if hasattr(model, "embed"):
+        return model.embed(inputs)[0] 
+    else:
+        return model(inputs, return_features=True)
 
 def get_num_params(model, is_trainable = None):
     """Get number of parameters of the model, specified by 'None': all parameters;
@@ -35,7 +45,7 @@ def get_backbone(backbone, dataset, castrate=True):
         backbone.n_classes = 100
     elif dataset == 'seq-cifar10':
         backbone.n_classes = 10
-    backbone.output_dim = (backbone.fc if hasattr(backbone, "fc") else backbone.classifier).in_features
+    backbone.output_dim = (get_head(backbone)).in_features
     if not castrate:
         if hasattr(backbone, "fc"): backbone.fc = torch.nn.Identity()
         else: backbone.classifier = torch.nn.Identity()

@@ -17,7 +17,7 @@ class Finetune(ContinualModel):
             outputs = self.net.backbone(inputs1.to(self.device))
             loss = self.loss(outputs, labels).mean()
             data_dict = {'loss': loss}
-            data_dict['penalty'] = 0.0
+            data_dict['penalty'] = 0.0            
         else:
             data_dict = self.net.forward(inputs1.to(self.device, non_blocking=True), inputs2.to(self.device, non_blocking=True))
             data_dict['loss'] = data_dict['loss'].mean()

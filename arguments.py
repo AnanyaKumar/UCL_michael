@@ -109,7 +109,7 @@ def get_args():
 
     if args.debug:
         if args.train: 
-            args.train.batch_size = 4
+            args.train.batch_size = 256
             args.train.num_epochs = 2
             args.train.stop_at_epoch = 2
             if args.lpft:

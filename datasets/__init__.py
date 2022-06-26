@@ -5,6 +5,7 @@
 
 from datasets.seq_mnist import SequentialMNIST
 from datasets.seq_fmnist import SequentialFMNIST
+from datasets.fmow import FMOW
 from datasets.seq_cifar10 import SequentialCIFAR10
 from datasets.seq_cifar100 import SequentialCIFAR100
 from datasets.seq_tinyimagenet import SequentialTinyImagenet
@@ -16,6 +17,7 @@ import torchvision
 NAMES = {
     SequentialMNIST.NAME: SequentialMNIST,
     SequentialFMNIST.NAME: SequentialFMNIST,
+    FMOW.NAME: FMOW,
     SequentialSVHN.NAME: SequentialSVHN,
     SequentialCIFAR10.NAME: SequentialCIFAR10,
     SequentialCIFAR100.NAME: SequentialCIFAR100,

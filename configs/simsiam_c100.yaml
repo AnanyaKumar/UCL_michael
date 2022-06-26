@@ -12,6 +12,7 @@ model:
   buffer_size: 256
 
 train:
+
   optimizer: 
     name: sgd
     weight_decay: 0.0005

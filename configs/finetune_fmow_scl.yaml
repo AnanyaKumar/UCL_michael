@@ -12,19 +12,20 @@ model:
   buffer_size: 256
 
 train:
+  disable_logging: False
   cl_default: True
   optimizer: 
-    name: sgd
-    weight_decay: 0.0005
-    momentum: 0.9
+    name: adam
+    weight_decay: 0.0
+    momentum: 0.0
   save_best: False
   naive: False
   warmup_epochs: 10
   warmup_lr: 0
   base_lr: 0.03
   final_lr: 0
-  ft_lr: 0.03
-  lp_lr: 0.03
+  ft_lr: 0.0008
+  lp_lr: 0.0008
   grad_thresh: -1.
   grad_by_layer: False
   freeze_include_head: False
@@ -36,9 +37,11 @@ train:
   train_first: False
   reset_lp_lr: True
   lp_epoch_frac: 0.5
-  batch_size: 256
+  batch_size: 32
   knn_monitor: True # knn monitor will take more time
   knn_interval: 1
+  probe_monitor: True
+  probe_interval: 1
   knn_k: 200
   alpha: 0.4
 eval: # linear evaluation, False will turn off automatic evaluation after training

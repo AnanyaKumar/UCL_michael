@@ -246,7 +246,7 @@ def trainable(config):
   train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
 
   # define model
-  model = get_model(args, device, len(train_loader), dataset.get_transform(args))
+  model = get_model(args, device, len(train_loader), dataset, dataset.get_transform(args))
 
   backbone_n_params = get_num_params(model.net.backbone)
   if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(backbone_n_params=backbone_n_params)
@@ -270,7 +270,7 @@ def trainable(config):
 
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
-    train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
+    train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs == 0)
     if args.last and t < 4: 
       print("continuing cause only train last task...")
       continue
@@ -361,6 +361,7 @@ def trainable(config):
         if args.train.all_tasks_num_epochs > 0:
           # use the last fc each test task         
           old_fcs = [old_fcs[-1] for _ in range(dataset.N_TASKS)]
+        breakpoint()
         task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
         mean_acc_task_il = np.mean(task_accs,axis=1)
 

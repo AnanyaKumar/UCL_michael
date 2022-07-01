@@ -29,6 +29,7 @@ class FMOW(ContinualDataset):
     NAME = 'fmow'
     SETTING = 'domain-il'
     N_CLASSES_PER_TASK = 62    
+    HEAD_DIM = 62
 
     REGION_ORDER = [1, 3, 0, 4, 2, 5]
     # REGION_ORDER = [5,2,4,0,3,1]

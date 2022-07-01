@@ -2,10 +2,10 @@ import os
 import importlib
 from .simsiam import SimSiam
 from .barlowtwins import BarlowTwins
-from torchvision.models import resnet50, resnet18, resnet34, resnet101, resnet152
 import torch
 from types import FunctionType as ftype
-from .backbones import resnet18
+from .backbones import resnet18, resnet50, resnet101, resnet152
+import torch.nn as nn
 
 swav = torch.hub.load('facebookresearch/swav:main', 'resnet50')
 densenet121 = torch.hub.load('pytorch/vision:v0.10.0', 'densenet121', pretrained=True)
@@ -37,14 +37,19 @@ def get_num_params(model, is_trainable = None):
             num_params += nn
     return num_params
 
-def get_backbone(backbone, dataset, castrate=True):
+def get_backbone(backbone, dataset, castrate=True):        
     backbone = eval(f"{backbone}")
     if type(backbone) == ftype:
         backbone = backbone()
-    if dataset == 'seq-cifar100':
-        backbone.n_classes = 100
-    elif dataset == 'seq-cifar10':
-        backbone.n_classes = 10
+    
+    # reconcile head dimension from loading pretrained weights or default initialization
+    head_attr_name = "fc" if hasattr(backbone, "fc") else "classifier"
+    if getattr(backbone, head_attr_name).out_features != dataset.HEAD_DIM:
+        print(f"reinitializing head to dimension {dataset.HEAD_DIM}")
+        in_features = getattr(backbone, head_attr_name).in_features
+        setattr(backbone, head_attr_name, nn.Linear(in_features, dataset.HEAD_DIM))
+
+    backbone.n_classes = dataset.HEAD_DIM
     backbone.output_dim = (get_head(backbone)).in_features
     if not castrate:
         if hasattr(backbone, "fc"): backbone.fc = torch.nn.Identity()
@@ -57,17 +62,17 @@ def get_all_models():
     return [model.split('.')[0] for model in os.listdir('/sailhome/msun415/UCL/models')
             if not model.find('__') > -1 and 'py' in model]
 
-def get_model(args, device, len_train_loader, transform):
+def get_model(args, device, len_train_loader, dataset, transform):
     loss = torch.nn.CrossEntropyLoss()
     if args.model.name == 'simsiam':
-        backbone =  SimSiam(get_backbone(args.model.backbone, args.dataset.name, args.cl_default)).to(device)
-        for class_ in [resnet18, resnet34, resnet50, resnet101, resnet152, densenet121, swav]:            
+        backbone =  SimSiam(get_backbone(args.model.backbone, dataset, args.cl_default)).to(device)
+        for class_ in [resnet18, resnet50, resnet101, resnet152, densenet121, swav]:            
             backbone_ = class_() if type(class_) == ftype else class_
             print(f"{backbone_.__class__} has {get_num_params(backbone_)} params")
         if args.model.proj_layers is not None:
             backbone.projector.set_layers(args.model.proj_layers)
     elif args.model.name == 'barlowtwins':
-        backbone = BarlowTwins(get_backbone(args.model.backbone, args.dataset.name, args.cl_default), device).to(device)
+        backbone = BarlowTwins(get_backbone(args.model.backbone, dataset, args.cl_default), device).to(device)
         if args.model.proj_layers is not None:
             backbone.projector.set_layers(args.model.proj_layers)
 

@@ -24,6 +24,7 @@ class SequentialCIFAR100(ContinualDataset):
     SETTING = 'class-il'
     N_CLASSES_PER_TASK = 5
     N_TASKS = 20
+    HEAD_DIM = 100
    
     def get_data_loaders(self, args):
         transform = get_aug(train=True, **args.aug_kwargs)

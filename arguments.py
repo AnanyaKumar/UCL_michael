@@ -32,6 +32,15 @@ class Namespace(object):
 
         raise AttributeError(f"Can not find {attribute} in namespace. Please write {attribute} in your config file(xxx.yaml)!")
 
+    @staticmethod
+    def namespace_to_dict(namespace):
+        is_namespace = lambda x: isinstance(x, Namespace) or isinstance(x, argparse.Namespace)
+        return {
+            k: namespace_to_dict(v) if is_namespace(v) else v
+            for k, v in (vars(namespace) if is_namespace(namespace) else namespace).items()
+        }
+        
+
 def update_args(args, key, value):
     args_update = deepcopy(args)
     setattr(args_update, key, value)
@@ -39,10 +48,7 @@ def update_args(args, key, value):
 
 def init_args(args_dict):
     """Init argparse from dictionary."""
-    parser = argparse.ArgumentParser()
-    args = parser.parse_args([])
-    args.__dict__ = args_dict
-    return args
+    return Namespace(args_dict)
 
 def set_deterministic(seed):
     # seed by default is None 

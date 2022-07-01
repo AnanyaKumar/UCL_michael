@@ -15,7 +15,7 @@ train:
   disable_logging: False
   cl_default: True
   optimizer: 
-    name: adam
+    name: sgd
     weight_decay: 0.0
     momentum: 0.0
   save_best: False

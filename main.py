@@ -12,7 +12,7 @@ from tqdm import tqdm
 import time
 from sklearn.model_selection import ParameterGrid
 
-from arguments import get_args, update_args, init_args
+from arguments import get_args, update_args, init_args, Namespace
 from augmentations import get_aug
 from models import get_model, get_num_params, get_head, get_features
 from tools import AverageMeter, knn_monitor, probe_monitor, logistic_monitor, Logger, file_exist_check
@@ -225,17 +225,18 @@ def trainable(config):
   
   args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
 
-  assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor
-  
-  if args['train'].disable_logging:
-    os.environ['logging'] = ""
-  else:
-    os.environ['logging'] = "wandb,tune"
-  if not args['debug_lpft'] and "tune" in os.environ["logging"]:
-    wandb.init(project=args['project_name'], name=args['run_name'], 
-                group=args['group_name'], config=vars(args['train']))
+  assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
     
   args = init_args(args)
+
+  if args.train.disable_logging:
+    os.environ['logging'] = ""
+  else:
+    # os.environ['logging'] = "wandb,tune"
+    os.environ['logging'] = "wandb"
+  if not args.debug_lpft and "wandb" in os.environ["logging"]:
+    wandb.init(project=args.project_name, name=args.run_name, 
+                group=args.group_name, config=Namespace.namespace_to_dict(deepcopy(args)))
 
   # makes fraction of lp epochs compatible with lr scheduler
   # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
@@ -408,39 +409,16 @@ def trainable(config):
 
 
 def train(args):  
-  config = {"default_args": vars(args), "train": {
-    # "save_best": [True],
-    # "naive": [True, False],
-    # "cl_default": [False],
-    # "warmup_epochs": [10],
-    # "warmup_lr": [0],    
-    # "ft_lr": [0.01],
-    # "grad_thresh": [0.],
-    # "grad_by_layer": [True],
-    # "num_lp_epochs": [0],
-    # "ft_lr": [0.03],
-    # "top_k": [10, 20, 50, 100],
-    "knn_monitor": [False],
-    "probe_monitor": [False],
-    # "probe_interval": [5],
-    "all_tasks_num_epochs": [1000],
-    # "disable_logging": [False],
-    # "knn_interval": [5],
-    # "scale": [0.5],
-    "num_epochs": [0],
-    # "proj_is_head": [False],
-  }}
+  config = {"default_args": vars(args), "train": vars(args.train)}
     ## RAY TUNE
   # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 15, "gpu": 1})
   if args.debug_lpft:
     os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-    config['train'] = ParameterGrid(config['train'])[0]
     try:
       trainable(config=config)
     except Exception as e:
       pdb.post_mortem()
   else:
-    config['train'] = ParameterGrid(config['train'])[0]
     trainable(config=config)    
     # config['train'] = {k: tune.grid_search(v) for (k, v) in config['train'].items()}
     # tune.run(trainable, config=config, num_samples=1, resources_per_trial={"cpu": 10, "gpu": 1})

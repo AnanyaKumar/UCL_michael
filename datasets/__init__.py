@@ -31,8 +31,8 @@ def get_dataset(args: Namespace) -> ContinualDataset:
     :param args: the arguments which contains the hyperparameters
     :return: the continual dataset
     """
-    assert args.dataset_kwargs['dataset'] in NAMES.keys()
-    return NAMES[args.dataset_kwargs['dataset']](args)
+    assert args.dataset_kwargs.dataset in NAMES.keys()
+    return NAMES[args.dataset_kwargs.dataset](args)
 
 
 def get_gcl_dataset(args: Namespace):

@@ -39,8 +39,8 @@ class FMOW(ContinualDataset):
 
     def __init__(self, args):
         dataset = get_dataset(dataset="fmow", root_dir=f"/{socket.gethostname().split('.')[0]}/scr0/msun415/", download=False)
-        transform = get_aug(train=True, **args.aug_kwargs)
-        test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
+        transform = get_aug(train=True, **args.namespace_to_dict(args.aug_kwargs))
+        test_transform = get_aug(train=False, train_classifier=False, **args.namespace_to_dict(args.aug_kwargs))
         self.train_data = dataset.get_subset("train", transform=transform)
         self.memory_data = dataset.get_subset("train", transform=test_transform)
         self.test_data = dataset.get_subset("id_val", transform=test_transform)

@@ -1,17 +1,18 @@
 name: simsiam-c10-experiment-resnet18
 dataset: 
-  name: fmow
+  name: seq-cifar10
   image_size: 32
   num_workers: 4
 
 model: 
   name: simsiam
-  backbone: densenet121
+  backbone: resnet18
   cl_model: finetune
   proj_layers: 2
   buffer_size: 256
 
 train:
+  disable_logging: False
   cl_default: True
   optimizer: 
     name: sgd
@@ -39,6 +40,8 @@ train:
   batch_size: 256
   knn_monitor: True # knn monitor will take more time
   knn_interval: 1
+  probe_monitor: True
+  probe_interval: 1
   knn_k: 200
   alpha: 0.4
 eval: # linear evaluation, False will turn off automatic evaluation after training

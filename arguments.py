@@ -127,7 +127,7 @@ def get_args():
         args.dataset.num_workers = 0
 
 
-    assert not None in [args.log_dir, args.data_dir]
+    assert not None in [args.log_dir] # used to include args.data_dir too, but assume each dataset finds data location manually
 
     # args.log_dir = os.path.join(args.log_dir, 'in-progress_'+datetime.now().strftime('%m%d%H%M%S_')+args.name)
     args.log_dir = os.path.join(args.log_dir, args.group_name, args.run_name)

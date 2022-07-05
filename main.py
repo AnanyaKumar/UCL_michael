@@ -228,6 +228,7 @@ def trainable(config):
   assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
     
   args = init_args(args)
+  args.aug_kwargs = vars(args.aug_kwargs)
 
   if args.train.disable_logging:
     os.environ['logging'] = ""

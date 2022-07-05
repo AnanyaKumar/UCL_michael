@@ -271,16 +271,17 @@ def trainable(config):
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs == 0)
-    if args.last and t < 4: 
+    if args.last and t < dataset.N_TASKS - 1: 
       print("continuing cause only train last task...")
       continue
 
     if args.train.all_tasks_num_epochs and t == dataset.N_TASKS - 1:
       global_progress = tqdm(range(0, args.train.all_tasks_num_epochs), desc=f'Training all tasks')
+      args.train.num_epochs = args.train.all_tasks_num_epochs
     else:
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
 
-    print("at start of task, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))
+    print(f"at start of task {t}, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))
 
     epoch = 0
     for epoch in global_progress:   
@@ -361,7 +362,6 @@ def trainable(config):
         if args.train.all_tasks_num_epochs > 0:
           # use the last fc each test task         
           old_fcs = [old_fcs[-1] for _ in range(dataset.N_TASKS)]
-        breakpoint()
         task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
         mean_acc_task_il = np.mean(task_accs,axis=1)
 

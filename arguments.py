@@ -101,6 +101,7 @@ def get_args():
     with open(cl_args.config_file, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     populate_defaults(config)
+
     io_utils.update_config(unparsed, config)
     args = Namespace(config)
     def enforce_arg(args, arg_name):
@@ -137,6 +138,7 @@ def get_args():
     os.makedirs(args.log_dir, exist_ok=False)
     print(f'creating file {args.log_dir}')
     args.ckpt_dir = os.path.join(args.log_dir, 'checkpoints')
+
     os.makedirs(args.ckpt_dir, exist_ok=True)
 
     # shutil.copy2(cl_args.config_file, args.log_dir)

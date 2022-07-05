@@ -93,7 +93,16 @@ def transform_unparsed(unparsed):
         
         curr_dict[option_name_list[-1]] = vals
     
-    return [res['train'] for res in process(unparsed_dic)]
+    results = []
+    all_res = process(unparsed_dic)
+
+    for res in all_res:
+        for (k, v) in res['train'].items():
+            res['train.'+k] = v
+        res.pop('train')
+        results.append(res)
+    
+    return all_res
 
 
 ############################################
@@ -144,7 +153,7 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     # Saved files have full dataset paths, e.g. /scr/biggest/..., so no need to add root_prefix.
     kwargs['config'] = config_path
    
-    kwargs['log_dir'] = group_run_to_log_path(group_name, run_name, args)
+    kwargs['log_dir'] = args.log_dir
     kwargs['tmp_par_ckp_dir'] = args.tmp_dir + '/' + group_name + '_' + run_name
 
     kwargs['project_name'] = project_name

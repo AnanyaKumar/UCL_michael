@@ -31,13 +31,17 @@ import os
 from ray import tune
 import wandb
 
-def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, end_task=True):
+def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=True):
   probe_train_results = []
   probe_results = []
   for i in range(len(dataset.test_loaders)):
     train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft) 
     probe_results.append(acc)
     probe_train_results.append(train_acc)
+
+    test_stats[f"probe_acc_task_{i+1}"].append(acc)
+    train_stats[f"probe_train_acc_task_{i+1}"].append(train_acc)
+    test_stats[f"probe_best_c_{i+1}"].append(best_c)
     if not args.debug_lpft and "tune" in os.environ["logging"]: 
       tune.report(**{f"probe_acc_task_{i+1}": acc})
       tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
@@ -60,6 +64,8 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
     else:
       mean_acc = np.mean(probe_results)
       mean_train_acc = np.mean(probe_train_results)
+    train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
+    train_stats[f"probe_mean_acc"].append(mean_acc)
     if not args.debug_lpft and "tune" in os.environ["logging"]: 
       tune.report(**{f"probe_train_mean_acc": mean_train_acc})
       tune.report(**{f"probe_mean_acc": mean_acc})
@@ -218,16 +224,16 @@ def trainable(config):
   for (k, v) in config['train'].items(): 
     args['train'] = update_args(args['train'], k, v)
 
-
-
     if k in args["aug_kwargs"]:
-      args["aug_kwargs"][k] = v
+      assert k in args, f"specify aug kwarg {k}"
+      args["aug_kwargs"][k] = args[k]
   
   args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
 
   assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
     
   args = init_args(args)
+
   args.aug_kwargs = vars(args.aug_kwargs)
 
   if args.train.disable_logging:
@@ -262,12 +268,14 @@ def trainable(config):
     save_dict = torch.load(model_path, map_location='cpu')
     msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True) 
     model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
-
-  old_fcs = []
+  
   all_task_results = []
-
+  old_fcs = []
   all_probe_results = []
   all_probe_train_results = []
+
+  train_metrics = []
+  test_metrics = []
 
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
@@ -282,10 +290,19 @@ def trainable(config):
     else:
       global_progress = tqdm(range(0, args.train.stop_at_epoch), desc=f'Training')
 
-    print(f"at start of task {t}, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))
+    print(f"at start of task {t}, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))    
 
     epoch = 0
-    for epoch in global_progress:   
+    for epoch in global_progress: 
+
+      ### Setup logging  
+      train_stats = defaultdict(list)
+      test_stats = defaultdict(list)
+      train_stats['epoch'] = [epoch]
+      test_stats['epoch'] = [epoch]
+      train_stats['task'] = [t]
+      test_stats['task'] = [t]
+
       if args.lpft and (not args.train.ft_first or t):    
         freeze_weights(model, args, only_log=epoch)          
         if epoch == args.train.num_lp_epochs:
@@ -302,8 +319,14 @@ def trainable(config):
       for idx, ((images1, images2, notaug_images), labels, *meta_args) in enumerate(local_progress):
         data_dict = model.observe(images1, labels, images2, notaug_images)
 
-        if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(loss=data_dict['loss'].item())
-        if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'loss': data_dict['loss'].item()})
+        for (k, v) in data_dict.items():
+          train_stats[k].append((epoch, float(v)))
+
+        if not args.debug_lpft and "tune" in os.environ["logging"]: 
+          tune.report(loss=data_dict['loss'].item())
+        if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+          wandb.log({'loss': data_dict['loss'].item()})
+          
         if idx == 0:
           print("after first batch, cuda allocated", torch.cuda.memory_allocated())        
         elif idx == 1:
@@ -323,10 +346,12 @@ def trainable(config):
           acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
 
           results.append(acc)
+          test_stats[f'knn_acc_task_{i+1}'].append(acc)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
           if args.debug_lpft:
             print({f"knn_acc_task_{i+1}": acc})
           if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
+
         if not epoch:
           all_task_results.append(results)
         else:
@@ -335,6 +360,8 @@ def trainable(config):
           mean_acc = np.mean([all_task_results[i][i] for i in range(len(dataset.test_loaders))])
         else:
           mean_acc = np.mean(results)
+
+        test_stats[f"knn_mean_acc"].append(mean_acc)
         if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_mean_acc": mean_acc})
         if args.debug_lpft:
           print({f"knn_mean_acc": mean_acc})
@@ -351,11 +378,13 @@ def trainable(config):
         save_model(model,args,t,epoch,dataset)
 
       if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
-        probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, end_task=False)
+        probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=False)
 
       ## BELOW for task-il evaluation, not including for domain-il
 
       if args.cl_default:  
+        if epoch > 0:
+          old_fcs.pop(-1)
         old_fcs.append(deepcopy(get_head(model.net.backbone)))      
         accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
         # results_mask_classes.append(accs[1])
@@ -366,6 +395,8 @@ def trainable(config):
         task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
         mean_acc_task_il = np.mean(task_accs,axis=1)
 
+        test_stats['class_il_mean_acc'].append(mean_acc[0])
+        test_stats['task_il_mean_acc'].append(mean_acc_task_il[1])
         if not args.debug_lpft and "tune" in os.environ["logging"]: 
           tune.report(class_il_mean_acc=mean_acc[0])
           tune.report(task_il_mean_acc=mean_acc_task_il[1])
@@ -373,21 +404,25 @@ def trainable(config):
             tune.report(**{f"task_acc_{i}": task_accs[1][i]})
         if not args.debug_lpft and "wandb" in os.environ["logging"]: 
           wandb.log({'class_il_mean_acc': mean_acc[0]})
-          wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})
-          for i in range(len(task_accs)):
+          wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})  
+          for i in range(len(task_accs[1])):            
             wandb.log({f'task_il_acc_{i}': task_accs[1][i]})
         if args.debug_lpft:
           print({'class_il_mean_acc': mean_acc[0]})
           print({'task_il_mean_acc': mean_acc_task_il[1]})
         # print_mean_accuracy(mean_acc, t + 1, dataset.SETTING)
 
+      logger.process_stats(train_stats, test_stats)
+      train_metrics.append(train_stats)
+      test_metrics.append(test_stats)
+      logger.write_tsv(train_metrics, test_metrics)
+
 
     if not args.train.save_best:
       save_model(model,args,t,epoch,dataset)
     
-
-    if not args.train.all_tasks_num_epochs or t == dataset.N_TASKS - 1:
-      # always do a probe evaluate at end of task
+    if args.train.probe_monitor and (not args.train.all_tasks_num_epochs or t == dataset.N_TASKS - 1):
+      # do a probe evaluate at end of task
       probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results)
       
 

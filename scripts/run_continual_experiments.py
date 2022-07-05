@@ -4,6 +4,9 @@ from collections import namedtuple
 from itertools import product
 from sklearn.model_selection import ParameterGrid
 from copy import deepcopy
+import re
+import shlex
+import subprocess
 
 PROJECT_NAME = "continual_learning"
 
@@ -159,11 +162,10 @@ def run_sbatch(cmd, job_name, args):
     slurm_cmd += f' {sbatch_script_path} '
     slurm_cmd += f'"{cmd}"'
     print(slurm_cmd + '\n')
-    # output = subprocess.check_output(shlex.split(slurm_cmd)).decode('utf8')
-    # job_names = list(re.findall(r'\d+', output))
-    # assert(len(job_names) == 1)
-    # return job_names[0]
-    # print(f"cmd: {cmd}, job_name: {job_name}")
+    output = subprocess.check_output(shlex.split(slurm_cmd)).decode('utf8')
+    job_names = list(re.findall(r'\d+', output))
+    assert(len(job_names) == 1)
+    return job_names[0]
 
 
 def run_job(cmd, job_name, args):

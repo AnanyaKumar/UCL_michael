@@ -37,7 +37,7 @@ train:
   train_first: False
   reset_lp_lr: True
   lp_epoch_frac: 0.5
-  batch_size: 256
+  batch_size: 32
   knn_monitor: True # knn monitor will take more time
   knn_interval: 1
   probe_monitor: True

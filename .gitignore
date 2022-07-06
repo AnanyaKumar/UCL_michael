@@ -3,3 +3,6 @@ __pycache__/
 checkpoints/
 data/
 wandb/
+logs/
+slurm_outputs/
+*.out

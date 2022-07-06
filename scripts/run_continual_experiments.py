@@ -31,6 +31,22 @@ cifar10 = Dataset(
     slurm_data_cmd=None
 )
 
+cifar100_scl = Dataset(
+    name='cifar100_scl',
+    val_metric='knn_mean_acc',
+    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_acc_task_5', 'knn_acc_task_6', 'knn_acc_task_7', 'knn_acc_task_8', 'knn_acc_task_9', 'knn_mean_acc'],
+    config_rel_path='finetune_c100_scl.yaml',
+    slurm_data_cmd=None
+)
+
+cifar100 = Dataset(
+    name='cifar100',
+    val_metric='knn_mean_acc',
+    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_acc_task_5', 'knn_acc_task_6', 'knn_acc_task_7', 'knn_acc_task_8', 'knn_acc_task_9', 'knn_mean_acc'],
+    config_rel_path='simsiam_c100.yaml',
+    slurm_data_cmd=None
+)
+
 fmow = Dataset(
     name='fmow',
     val_metric='task_il_mean_acc',
@@ -42,6 +58,8 @@ fmow = Dataset(
 names_to_datasets = {
     'cifar10_scl': cifar10_scl, 
     'cifar10': cifar10,
+    'cifar100_scl': cifar100_scl, 
+    'cifar100': cifar100,
     "fmow": fmow
 }
 
@@ -120,6 +138,9 @@ def get_config_path(args, config_rel_path):
 
 def group_run_to_log_path(group_name, run_name, args):
     return args.log_dir + '/' + group_name + '/' + run_name
+
+def get_group_name(adapt_name, dataset_name):
+    return adapt_name+'_'+dataset_name
  
 def format_key_value(k, v):
     if type(v) == list:
@@ -194,7 +215,7 @@ def config_run(args, kwargs, config_path, run_name, group_name, project_name,
 def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix=''):
     run_name = hyperparams_to_str(hyperparams)
     run_name += run_name_suffix
-    group_name = adapt_name.split("_")[0]
+    group_name = get_group_name(adapt_name, dataset.name)
     project_name = PROJECT_NAME
     kwargs = deepcopy(hyperparams)
     config_path = get_config_path(args, dataset.config_rel_path)
@@ -226,7 +247,6 @@ def replicated_sweep(adapt_name, dataset, hyperparams_list, num_replications,
 def lpft_experiments(args, unparsed):
     adapt_name = 'lpft'
     dataset = get_dataset(args.dataset)
-    adapt_name += f"_{dataset.name}"
     hyperparameters_list = transform_unparsed(unparsed)
 
     if args.only_one_run:

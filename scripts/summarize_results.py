@@ -26,12 +26,9 @@ def get_result(file_path, val_metric, output_metrics, take_max=True, take_last=F
         if val_metric not in df:
             raise ValueError(f'{val_metric} column not in {file_path}')
         if take_max:
-            best_idx = df[val_metric].idxmax()
-        else:
-            if take_last:
-                best_idx = -1
-            else:
-                best_idx = df[val_metric].idxmin()
+            best_idx = (df[df['task'] == max(df['task'])] if take_last else df)[val_metric].idxmax()
+        else:            
+            best_idx = (df[df['task'] == max(df['task'])] if take_last else df)[val_metric].idxmin()
         best_value = df[val_metric][best_idx]
     else:
         best_idx = -1

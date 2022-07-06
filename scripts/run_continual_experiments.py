@@ -223,7 +223,7 @@ def replicated_sweep(adapt_name, dataset, hyperparams_list, num_replications,
     return sweep_ids 
 
 
-def lpft_experiments(args, unparsed, num_replications=1):
+def lpft_experiments(args, unparsed):
     adapt_name = 'lpft'
     dataset = get_dataset(args.dataset)
     adapt_name += f"_{dataset.name}"
@@ -231,6 +231,8 @@ def lpft_experiments(args, unparsed, num_replications=1):
 
     if args.only_one_run:
         hyperparameters_list = [hyperparameters_list[0]]
+    
+    num_replications = args.num_replications
     
     all_ids = replicated_sweep(
         adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
@@ -254,6 +256,8 @@ if __name__ == "__main__":
                         help='Experiment to run.')
     parser.add_argument('--dataset', type=str, required=True,
                         help='Dataset to train and test on.')
+    parser.add_argument('--num_replications', type=int, required=False, default=1,
+                        help='Number of replication runs.')
     parser.add_argument('--seed', type=int, required=False, default=0,
                         help='Base seed, we typically add to this seed for replication runs.')
     # Note that store_true creates a default value of False.

@@ -1,7 +1,7 @@
-name: simsiam-c10-experiment-resnet18
+name: simsiam-fmow-experiment-resnet18
 dataset: 
   name: fmow
-  image_size: 32
+  image_size: 224
   num_workers: 4
 
 model: 
@@ -15,7 +15,7 @@ train:
   disable_logging: False
   cl_default: True
   optimizer: 
-    name: sgd
+    name: adam
     weight_decay: 0.0
     momentum: 0.0
   save_best: False

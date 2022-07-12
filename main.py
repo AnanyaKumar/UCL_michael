@@ -146,17 +146,41 @@ def save_model(model, args, t, epoch, dataset):
   if hasattr(model, 'end_task'):
     model.end_task(dataset)
 
+def layer_taxonomy(name, cl_default):
+  """
+    At the start, when all grad is 0, freeze in this biased order.
+    Also useful to see.
+  """
+  if name == 'resnet18':
+    extract_name = lambda x: x[0].split('.')[0] if args.cl_default else '.'.join(x[0].split('.')[1:3])
+    if cl_default:    
+      head_name = "fc"  
+      tiebreak = ["conv1", "bn1", "layer1", "layer2", "layer3", "layer4", "fc"]
+    else:
+      head_name = "predictor"
+      tiebreak = ['backbone.conv1', 'backbone.bn1', 'backbone.layer1', 'backbone.layer2', 'backbone.layer3', 'backbone.layer4', 'projector.layer1', 'projector.layer2', 'projector.layer3', 'predictor.layer1', 'predictor.layer2']
+  elif name == 'densenet121':
+    extract_name = lambda x: x[0].split('.')[1]
+    if cl_default:
+      head_name = "classifier"
+      tiebreak = ['conv0', 'norm0', 'denseblock1', 'transition1', 'denseblock2', 'transition2', 'denseblock3', 'transition3', 'denseblock4', 'norm5']
+    else:
+      raise NotImplementedError
+  else:
+    raise NotImplementedError
+  
+  return tiebreak, extract_name, head_name
+
+
 def freeze_weights(model, args, only_log=False):
-
-  extract_name = lambda x: x[0].split('.')[0] if args.cl_default else '.'.join(x[0].split('.')[1:3])
-
+  tiebreak, extract_name, head_name = layer_taxonomy(args.model.backbone, args.cl_default)
   num_frozen = 0
   frozen = []
   norm_avg = defaultdict(int)
   norm_avg_counts = defaultdict(int)
   all_params = list((model.net.backbone if args.cl_default else model).named_parameters())
   if not args.train.freeze_include_head:
-    head_name = "fc" if args.cl_default else "predictor"
+    # cause when cl_default=False all params start with prefix "backbone." (but check if true)
     all_params = list(filter(lambda param: param[0].split('.')[0 if args.cl_default else 1] != head_name, all_params))
 
   for (norm, x) in model_param_filter(all_params, float("inf")): 
@@ -175,13 +199,7 @@ def freeze_weights(model, args, only_log=False):
       if args.debug_lpft:
         print({f"grad/{k}_grad_abs_mean": float(norm_avg[k])})
 
-  if only_log: return
-
-  if args.cl_default:
-    # at the start, when all grad is 0, freeze in this biased order
-    tiebreak = ["conv1", "bn1", "layer1", "layer2", "layer3", "layer4", "fc"]
-  else:
-    tiebreak = ['backbone.conv1', 'backbone.bn1', 'backbone.layer1', 'backbone.layer2', 'backbone.layer3', 'backbone.layer4', 'projector.layer1', 'projector.layer2', 'projector.layer3', 'predictor.layer1', 'predictor.layer2']
+  if only_log: return  
 
   if args.train.grad_by_layer:
     num_layers = int(args.train.grad_thresh)
@@ -211,6 +229,8 @@ def unfreeze_weights(model, args):
   for pg in model.opt.param_groups:
     pg['lr'] = args.train.ft_lr*args.train.batch_size/256
   if not args.cl_default:
+    if "resnet" not in args.model.name:
+      raise NotImplementedError
     model.net.projector.requires_grad_(True)
     model.net.predictor.requires_grad_(True)
 
@@ -388,11 +408,13 @@ def trainable(config):
         old_fcs.append(deepcopy(get_head(model.net.backbone)))      
         accs = evaluate(model.net.backbone, dataset, device, debug=args.debug and args.debug_lpft)
         # results_mask_classes.append(accs[1])
-        mean_acc = accs[0]
+
+        mean_acc = np.mean(accs, axis=1)
         if args.train.all_tasks_num_epochs > 0:
           # use the last fc each test task         
           old_fcs = [old_fcs[-1] for _ in range(dataset.N_TASKS)]
         task_accs = evaluate(model.net.backbone, dataset, device, fc=old_fcs, debug=args.debug and args.debug_lpft)
+
         mean_acc_task_il = np.mean(task_accs,axis=1)
 
         test_stats['class_il_mean_acc'].append(mean_acc[0])

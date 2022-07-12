@@ -15,8 +15,8 @@ def knn_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_d
     t_1 = time.time()
     net.eval()
     # classes = len(memory_data_loader.dataset.classes)
-    classes = 62
-    # classes = 100
+    # classes = 62
+    classes = dataset.HEAD_DIM
     total_top1 = total_top1_mask = total_top5 = total_num = 0.0
     feature_bank = []
     print("knn cuda allocated", torch.cuda.memory_allocated())

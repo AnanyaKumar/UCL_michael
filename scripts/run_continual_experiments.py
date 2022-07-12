@@ -192,10 +192,11 @@ def run_sbatch(cmd, job_name, args):
     slurm_cmd += f' {sbatch_script_path} '
     slurm_cmd += f'"{cmd}"'
     print(slurm_cmd + '\n')
-    output = subprocess.check_output(shlex.split(slurm_cmd)).decode('utf8')
-    job_names = list(re.findall(r'\d+', output))
-    assert(len(job_names) == 1)
-    return job_names[0]
+    if not args.print_command_only:
+        output = subprocess.check_output(shlex.split(slurm_cmd)).decode('utf8')
+        job_names = list(re.findall(r'\d+', output))
+        assert(len(job_names) == 1)
+        return job_names[0]
 
 
 def run_job(cmd, job_name, args):
@@ -303,5 +304,7 @@ if __name__ == "__main__":
     parser.add_argument('--only_one_run', action='store_true',
                         help=('Only run one hyperparameter setting, e.g. for debugging'
                               '(also do not run replications).'), required=False)
+    parser.add_argument('--print_command_only', action='store_true',
+                        help='Only print sbatch command to debug', required=False)
     args, unparsed = parser.parse_known_args()
     main(args, unparsed)

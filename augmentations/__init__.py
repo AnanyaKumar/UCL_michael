@@ -1,4 +1,5 @@
 from .simsiam_aug import SimSiamTransform
+from .image_base import *
 from .eval_aug import Transform_single
 
 

@@ -16,13 +16,15 @@ import numpy as np
 from typing import Tuple
 from datasets.transforms.denormalization import DeNormalize
 import torch
-from augmentations import get_aug
+from augmentations import *
 from PIL import Image
 from wilds import get_dataset
 from wilds.common.data_loaders import get_train_loader, get_eval_loader
 from copy import deepcopy
 import socket
 
+_DEFAULT_IMAGE_TENSOR_NORMALIZATION_MEAN = [0.485, 0.456, 0.406]
+_DEFAULT_IMAGE_TENSOR_NORMALIZATION_STD = [0.229, 0.224, 0.225]
 
 class FMOW(ContinualDataset):
 
@@ -40,8 +42,8 @@ class FMOW(ContinualDataset):
 
     def __init__(self, args):
         dataset = get_dataset(dataset="fmow", root_dir=f"/{socket.gethostname().split('.')[0]}/scr0/msun415/", download=False)
-        transform = get_aug(train=True, **args.namespace_to_dict(args.aug_kwargs))
-        test_transform = get_aug(train=False, train_classifier=False, **args.namespace_to_dict(args.aug_kwargs))
+        transform = ImageBaseTransform()
+        test_transform = ImageBaseTransformSingle()
         self.train_data = dataset.get_subset("train", transform=transform)
         self.memory_data = dataset.get_subset("train", transform=test_transform)
         self.test_data = dataset.get_subset("id_val", transform=test_transform)
@@ -58,27 +60,15 @@ class FMOW(ContinualDataset):
 
         super().__init__(args)
 
+
     def get_transform(self, args):
-        cifar_norm = [[0.4914, 0.4822, 0.4465], [0.2470, 0.2435, 0.2615]]
-        if args.cl_default:
-            transform = transforms.Compose(
-                [transforms.ToPILImage(),
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(*cifar_norm)
-                ])
-        else:
-            transform = transforms.Compose(
-                [transforms.ToPILImage(),
-                transforms.RandomResizedCrop(32, scale=(0.08, 1.0), ratio=(3.0/4.0,4.0/3.0), interpolation=Image.BICUBIC),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(*cifar_norm)
-                ])
+        not_aug_transform = transforms.Compose([transforms.ToTensor()])
 
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            default_normalization
+        ])
         return transform
-
 
    
     def get_data_loaders(self, args, divide_tasks=True):
@@ -103,7 +93,7 @@ class FMOW(ContinualDataset):
         task_test_data.indices = indices                
         task_test_data.targets = self.test_dataset[mask].y.values
 
-        num_workers = 0 if args.debug else 0
+        num_workers = 0 if args.debug else 16
 
         train_loader = get_train_loader("standard", task_train_data, batch_size=self.args.train.batch_size, num_workers=num_workers)
         memory_loader = get_eval_loader("standard", task_memory_data, batch_size=self.args.train.batch_size//8, num_workers=num_workers)

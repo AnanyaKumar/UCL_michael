@@ -1,7 +1,9 @@
 from utils.buffer import Buffer
+import torch
 from torch.nn import functional as F
 from models.utils.continual_model import ContinualModel
 from augmentations import get_aug
+import numpy as np
 
 class Finetune(ContinualModel):
     NAME = 'finetune'

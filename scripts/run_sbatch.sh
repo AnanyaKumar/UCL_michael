@@ -10,16 +10,29 @@
 # Print execute commands in the log.
 set -x
 
-# source scripts/copy_imagenet_local.sh
+if [ $USER == "msun415" ]; then
+	# source scripts/copy_imagenet_local.sh
+    conda deactivate
+    home_dir="/sailhome/msun415"
+    virtual_env="/sailhome/msun415/continual_env_5-10"
+    project_dir="/sailhome/msun415/UCL_michael"
+    cd ${home_dir}
+    source ${virtual_env}/bin/activate
+    cd ${project_dir}
+    eval $1
 
-conda deactivate
-home_dir="/sailhome/msun415"
-virtual_env="/sailhome/msun415/continual_env_5-10"
-project_dir="/sailhome/msun415/UCL_michael"
+elif [ $USER == "ananya "] ; then
+    conda_env=`whoami`-ue
+    # source scripts/copy_imagenet_local.sh
+    source /u/nlp/anaconda/main/anaconda3/etc/profile.d/conda.sh
+    conda deactivate
+    echo $conda_env
+    conda activate $conda_env
+    cd $PWD
+    eval $1
+fi
 
-cd ${home_dir}
-source ${virtual_env}/bin/activate
 
-cd ${project_dir}
 
-eval $1
+
+

@@ -1,3 +1,4 @@
+from torchvision import transforms
 import torchvision.transforms as T
 from PIL import Image
 try:
@@ -17,16 +18,23 @@ class SimSiamTransform():
         # I use the setting from simclr which is 50% chance applying the gaussian blur
         # the 32 is prepared for cifar training where they disabled gaussian blur
         self.not_aug_transform = T.Compose([T.ToTensor()])
-        first_aug = T.RandomCrop(image_size, padding=4) if aug_kwargs['cl_default'] else T.RandomResizedCrop(image_size, scale=(aug_kwargs['scale'], 1.0))
-        self.transform = T.Compose([
-            first_aug,
-            T.RandomHorizontalFlip(),
-            T.RandomApply([T.ColorJitter(0.4,0.4,0.4,0.1)], p=0.8),
-            T.RandomGrayscale(p=0.2),
-            T.RandomApply([T.GaussianBlur(kernel_size=image_size//20*2+1, sigma=(0.1, 2.0))], p=p_blur),
-            T.ToTensor(),
-            T.Normalize(*mean_std)
-        ])
+        if aug_kwargs["no_train_augs"]: 
+            self.transform = transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(*mean_std)
+            ])
+        else:
+            first_aug = T.RandomCrop(image_size, padding=4) if aug_kwargs['cl_default'] else T.RandomResizedCrop(image_size, scale=(aug_kwargs['scale'], 1.0))
+            self.transform = T.Compose([
+                first_aug,
+                T.RandomHorizontalFlip(),
+                T.RandomApply([T.ColorJitter(0.4,0.4,0.4,0.1)], p=0.8),
+                T.RandomGrayscale(p=0.2),
+                T.RandomApply([T.GaussianBlur(kernel_size=image_size//20*2+1, sigma=(0.1, 2.0))], p=p_blur),
+                T.ToTensor(),
+                T.Normalize(*mean_std)
+            ])
     def __call__(self, x):
         x1 = self.transform(x)
         x2 = self.transform(x)

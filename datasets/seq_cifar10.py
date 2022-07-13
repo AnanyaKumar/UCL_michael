@@ -11,6 +11,7 @@ from PIL import Image
 from datasets.utils.validation import get_train_val
 from datasets.utils.continual_dataset import ContinualDataset, store_masked_loaders
 from datasets.utils.continual_dataset import get_previous_train_loader
+from datasets.cifar10_subsampled import CIFAR10Subsampled
 from typing import Tuple
 from datasets.transforms.denormalization import DeNormalize
 import torch
@@ -27,14 +28,30 @@ class SequentialCIFAR10(ContinualDataset):
     HEAD_DIM = 100
    
     def get_data_loaders(self, args, divide_tasks=True):
-        transform = get_aug(train=True, **args.aug_kwargs)
+        if 'no_train_augs' in args.__dict__ and args.no_train_augs:
+            transform = get_aug(train=True, train_classifier=False, no_train_augs=True)
+        else:
+            transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
 
-        train_dataset = CIFAR10(base_path() + 'CIFAR10', train=True,
-                                  download=True, transform=transform)
+        if 'train_len' in args.__dict__:
+            train_dataset = CIFAR10Subsampled(
+                base_path() + 'CIFAR10', train=True, train_len=args.train_len,
+                download=True, transform=transform)
+            memory_dataset = CIFAR10(
+                base_path() + 'CIFAR10', train=True,
+                download=True, transform=test_transform)
+            # memory_dataset = CIFAR10Subsampled(
+            #    base_path() + 'CIFAR10', train=True, train_len=args.train_len,
+            #    download=True, transform=test_transform)
+        else:
+            train_dataset = CIFAR10(
+                base_path() + 'CIFAR10', train=True,
+                download=True, transform=transform)
+            memory_dataset = CIFAR10(
+                base_path() + 'CIFAR10', train=True,
+                download=True, transform=test_transform)
         
-        memory_dataset = CIFAR10(base_path() + 'CIFAR10', train=True,
-                                  download=True, transform=test_transform)
         if self.args.validation:
             train_dataset, test_dataset = get_train_val(train_dataset, test_transform, self.NAME)
             memory_dataset, _ = get_train_val(memory_dataset, test_transform, self.NAME)

@@ -251,3 +251,98 @@ def knn_predict(feature, feature_bank, feature_labels, classes, knn_k, knn_t):
     pred_scores = torch.sum(one_hot_label.view(feature.size(0), -1, classes) * sim_weight.unsqueeze(dim=-1), dim=1)
 
     return pred_scores
+
+def get_acc(preds, labels):
+    return np.mean(preds == labels)
+
+def normalize_features(features, normalize_index):
+    # normalize_index is the index to compute mean and std-dev
+    # TODO: consider changing to axis=0
+    mean = np.mean(features[normalize_index])
+    stddev = np.std(features[normalize_index])
+    normalized_features = []
+    for i in range(len(features)):
+        normalized_features.append((features[i] - mean) / stddev)
+    return normalized_features
+
+def test_log_reg_warm_starting(features, labels, train_index, test_indices, val_index, loader_names,
+                               num_cs=100, start_c=-7, end_c=2, max_iter=200, random_state=0):
+    L = len(features)
+    # TODO: figure out what this should be based on initial results.
+    Cs = np.logspace(start_c, end_c, num_cs)
+    clf = LogisticRegression(random_state=random_state, warm_start=True, max_iter=max_iter)
+    #.fit(features[m][train_index], labels[m][train_index])
+    accs = []
+    best_acc = -1.0
+    best_clf, best_coef, best_intercept, best_i, best_c = None, None, None, None, None
+    for i, C in zip(range(len(Cs)), Cs):
+        clf.C = C
+        clf.fit(features[train_index], labels[train_index])
+        cur_accs = []
+        for l in test_indices:
+            cur_preds = clf.predict(features[l])
+            # These names are selected to be consistent with fine-tuning results.
+            # If you update these, please update scripts/run_adaptation_experiments.py
+            if l == train_index:
+                key = 'train/acc'
+            else:
+                key = 'test_acc/' + loader_names[l]
+            cur_acc = get_acc(cur_preds, labels[l])
+            # Don't multiply by 100, we multiply later in summarize_linprobe_results.py
+            cur_accs.append((key, cur_acc))
+            if l == val_index and cur_acc > best_acc:
+                best_acc = cur_acc
+                best_clf = copy.deepcopy(clf)
+                best_coef = copy.deepcopy(clf.coef_)
+                best_intercept = copy.deepcopy(clf.intercept_)
+                best_i = i
+                best_c = C
+        print(cur_accs, flush=True)
+        result_row = OrderedDict([('C', C)] + cur_accs)
+        accs.append(result_row)
+    return best_clf, best_coef, best_intercept, best_c, best_i, accs
+
+def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
+    features_and_labels = []
+    features = []
+    targets = []
+    for data, target in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=True):        
+        if cl_default:
+            feature = net(data.cuda(non_blocking=True), return_features=True)
+        else:
+            feature = net(data.cuda(non_blocking=True))
+        feature = feature.detach()
+        features.append(feature)
+        targets.append(target)
+
+    feature = torch.cat(features, dim=0)
+    label = torch.cat(targets, dim=0)
+        
+    features_and_labels.append((feature, label))
+
+    features = []
+    targets = []
+    for data, target in tqdm(test_data_loader, desc='Feature extracting', leave=False, disable=True):        
+        if cl_default:
+            feature = net(data.cuda(non_blocking=True), return_features=True)
+        else:
+            feature = net(data.cuda(non_blocking=True))
+        feature = feature.detach()
+        features.append(feature)
+        targets.append(target)
+
+    feature = torch.cat(features, dim=0)
+    label = torch.cat(targets, dim=0)
+
+    features_and_labels.append((feature, label))
+
+    features = [x[0].cpu().numpy() for x in features_and_labels]
+    labels = [x[1].cpu().numpy() for x in features_and_labels]
+    normalized_features = normalize_features(features, 0)
+    clf, coef, intercept, best_c, best_i, accs = test_log_reg_warm_starting(
+            normalized_features, labels, 0, [0, 1], val_index=1,
+            loader_names=["train", "test"], num_cs=40, random_state=0)
+        
+    
+    return accs[best_i]['train/acc'], accs[best_i]['test_acc/test'], accs[best_i]['C']
+

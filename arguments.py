@@ -101,7 +101,6 @@ def get_args():
     with open(cl_args.config_file, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     populate_defaults(config)
-
     io_utils.update_config(unparsed, config)
     args = Namespace(config)
     def enforce_arg(args, arg_name):
@@ -127,6 +126,7 @@ def get_args():
             args.eval.num_epochs = 1 # train only one epoch
         args.dataset.num_workers = 0
 
+    assert not None in [args.log_dir, args.data_dir]
 
     assert not None in [args.log_dir] # used to include args.data_dir too, but assume each dataset finds data location manually
 
@@ -149,9 +149,8 @@ def get_args():
     with open(config_json, 'w') as f:
         json.dump(args_dict, f)
     
-    set_deterministic(args.seed)
-
-
+    set_deterministic(args.seed)   
+   
     vars(args)['aug_kwargs'] = {
         'name':args.model.name,
         'image_size': args.dataset.image_size,

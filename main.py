@@ -241,15 +241,8 @@ def trainable(config):
   args = config["default_args"]
   device = args["device"]
   
-  for (k, v) in config['train'].items(): 
-    args['train'] = update_args(args['train'], k, v)
-
-    if k in args["aug_kwargs"]:
-      assert k in args, f"specify aug kwarg {k}"
-      args["aug_kwargs"][k] = args[k]
-  
+  # Do some train.argument specific assertions here
   args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
-
   assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
     
   args = init_args(args)

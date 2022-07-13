@@ -118,6 +118,9 @@ def transform_unparsed(unparsed):
         for (k, v) in res['train'].items():
             res['train.'+k] = v
         res.pop('train')
+        for (k, v) in res['model'].items():
+            res['model.'+k] = v
+        res.pop('model')
         results.append(res)
     
     return all_res

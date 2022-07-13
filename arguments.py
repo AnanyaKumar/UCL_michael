@@ -14,10 +14,12 @@ import json
 import shutil
 import warnings
 from copy import deepcopy
+import collections.abc
 
 from datetime import datetime
 
 import utils.io_utils as io_utils
+
 
 class Namespace(object):
     def __init__(self, somedict):
@@ -61,29 +63,52 @@ def set_deterministic(seed):
         torch.backends.cudnn.deterministic = True 
         torch.backends.cudnn.benchmark = False 
 
+def update(d, u):
+    for k, v in u.items():
+        if isinstance(v, collections.abc.Mapping):
+            d[k] = update(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
 def fill_default_value(d, k, v):
-    if k not in d:
-        d[k] = v
+    # v can be a dictionary, so need to update recursively
+    new_d = {k: v}
+    d = update(new_d, d) # this way, ensure config arguments isn't overridden
+    return d
 
 def populate_defaults(config):
-    fill_default_value(config, 'project_name', 'continual_learning')
-    fill_default_value(config, 'debug', False)
-    fill_default_value(config, 'debug_subset_size', 8)
-    fill_default_value(config, 'download', False)
-    fill_default_value(config, 'data_dir', os.getenv('DATA'))
-    fill_default_value(config, 'log_dir', os.getenv('LOG'))
-    # fill_default_value(config, 'ckpt_dir', os.getenv('CHECKPOINT'))
-    # fill_default_value(config, 'ckpt_dir_1', os.getenv('CHECKPOINT'))
-    fill_default_value(config, 'device', 'cuda'  if torch.cuda.is_available() else 'cpu')
-    fill_default_value(config, 'eval_from', None)
-    fill_default_value(config, 'hide_progress', False)
-    fill_default_value(config, 'cl_default', False)
-    fill_default_value(config, 'last', False)
-    fill_default_value(config, 'debug_lpft', False)
-    fill_default_value(config, 'lpft', False)
-    fill_default_value(config, 'save_as_orig', False)
-    fill_default_value(config, 'validation', False)
-    fill_default_value(config, 'ood_eval', False)
+    config = fill_default_value(config, 'project_name', 'continual_learning')
+    config = fill_default_value(config, 'debug', False)
+    config = fill_default_value(config, 'debug_subset_size', 8)
+    config = fill_default_value(config, 'download', False)
+    config = fill_default_value(config, 'data_dir', os.getenv('DATA'))
+    config = fill_default_value(config, 'log_dir', os.getenv('LOG'))
+    # config = # fill_default_value(config, 'ckpt_dir', os.getenv('CHECKPOINT'))
+    # config = # fill_default_value(config, 'ckpt_dir_1', os.getenv('CHECKPOINT'))
+    config = fill_default_value(config, 'device', 'cuda'  if torch.cuda.is_available() else 'cpu')
+    config = fill_default_value(config, 'eval_from', None)
+    config = fill_default_value(config, 'hide_progress', False)
+    config = fill_default_value(config, 'cl_default', False)
+    config = fill_default_value(config, 'last', False)
+    config = fill_default_value(config, 'debug_lpft', False)
+    config = fill_default_value(config, 'lpft', False)
+    config = fill_default_value(config, 'save_as_orig', False)
+    config = fill_default_value(config, 'validation', False)
+    config = fill_default_value(config, 'ood_eval', False)
+    config = fill_default_value(config, 'aug_kwargs', {
+        'no_train_augs': False,
+        'name': config['model']['name'],
+        'image_size': config['dataset']['image_size'],
+        'cl_default': config['cl_default'],
+        'scale': 0.2,
+    })
+    config = fill_default_value(config, 'model', {
+        'use_group_norm': False,
+        'group_norm_num_groups': 32
+    })
+    return config
+
 
 def namespace_to_dict(obj):
     # Recursively transform dict of namespaces into a dict.
@@ -100,7 +125,7 @@ def get_args():
 
     with open(cl_args.config_file, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    populate_defaults(config)
+    config = populate_defaults(config)    
     io_utils.update_config(unparsed, config)
     args = Namespace(config)
     def enforce_arg(args, arg_name):
@@ -109,6 +134,8 @@ def get_args():
     enforce_arg(args, 'group_name')
     enforce_arg(args, 'run_name')
     enforce_arg(args, 'log_dir')
+
+    args.aug_kwargs = vars(args.aug_kwargs)
 
         # for key, value in Namespace(yaml.load(f, Loader=yaml.FullLoader)).__dict__.items():
         #     vars(args)[key] = value
@@ -125,8 +152,6 @@ def get_args():
             args.eval.batch_size = 2
             args.eval.num_epochs = 1 # train only one epoch
         args.dataset.num_workers = 0
-
-    assert not None in [args.log_dir, args.data_dir]
 
     assert not None in [args.log_dir] # used to include args.data_dir too, but assume each dataset finds data location manually
 
@@ -150,13 +175,7 @@ def get_args():
         json.dump(args_dict, f)
     
     set_deterministic(args.seed)   
-   
-    vars(args)['aug_kwargs'] = {
-        'name':args.model.name,
-        'image_size': args.dataset.image_size,
-        'cl_default': args.cl_default,
-        'scale': 0.2,
-    }
+       
     vars(args)['dataset_kwargs'] = {
         # 'name':args.model.name,
         # 'image_size': args.dataset.image_size,

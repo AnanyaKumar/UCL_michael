@@ -5,6 +5,46 @@ import os
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152', 'resnext50_32x4d', 'resnext101_32x8d']
 
+
+import torch
+import torch.nn as nn
+from torch.nn.parameter import Parameter
+from torch.nn import functional as F
+
+
+class Conv2d(nn.Conv2d):
+
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1,
+                 padding=0, dilation=1, groups=1, bias=True):
+        super(Conv2d, self).__init__(in_channels, out_channels, kernel_size, stride,
+                 padding, dilation, groups, bias)
+
+    def forward(self, x):
+        # return super(Conv2d, self).forward(x)
+        weight = self.weight
+        weight_mean = weight.mean(dim=1, keepdim=True).mean(dim=2,
+                                  keepdim=True).mean(dim=3, keepdim=True)
+        weight = weight - weight_mean
+        std = weight.view(weight.size(0), -1).std(dim=1).view(-1, 1, 1, 1) + 1e-5
+        weight = weight / std.expand_as(weight)
+        return F.conv2d(x, weight, self.bias, self.stride,
+                        self.padding, self.dilation, self.groups)
+
+
+def BatchNorm2d(num_features):
+    return nn.GroupNorm(num_channels=num_features, num_groups=32)
+
+
+def ws_conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
+    """3x3 convolution with padding"""
+    return Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=dilation, groups=groups, bias=False, dilation=dilation)
+
+
+def ws_conv1x1(in_planes, out_planes, stride=1):
+    """1x1 convolution"""
+    return Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -104,9 +144,12 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=100, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
-        super(ResNet, self).__init__()
+        super(ResNet, self).__init__()        
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
+        else:
+            globals()["conv3x3"] = ws_conv3x3
+            globals()["conv1x1"] = ws_conv1x1
         self._norm_layer = norm_layer
 
         self.inplanes = 64
@@ -128,6 +171,7 @@ class ResNet(nn.Module):
         
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
+
         # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
@@ -217,8 +261,11 @@ class ResNet(nn.Module):
     def get_grads(self):
         grads = []
         for pp in list(self.parameters()):
-            # if pp.grad is not None:
-            grads.append(pp.grad.view(-1))
+            if pp.grad is not None:
+                grads.append(pp.grad.view(-1))
+            else: 
+                grads.append(torch.zeros(pp.shape).to(pp.device).view(-1))
+
         return torch.cat(grads)
 
 

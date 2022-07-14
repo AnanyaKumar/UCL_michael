@@ -38,7 +38,7 @@ def get_num_params(model, is_trainable = None):
     return num_params
 
 def get_backbone(backbone, dataset, castrate=True, args=None):  
-    if args is not None and 'use_group_norm' in args.model.__dict__:
+    if args is not None and 'use_group_norm' in args.model.__dict__ and args.model.use_group_norm:
         norm_layer = lambda c: torch.nn.GroupNorm(args.model.group_norm_num_groups, c)
         backbone = eval(f"{backbone}(norm_layer=norm_layer)")
     else:            

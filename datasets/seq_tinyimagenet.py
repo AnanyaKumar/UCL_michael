@@ -87,6 +87,7 @@ class SequentialTinyImagenet(ContinualDataset):
     SETTING = 'class-il'
     N_CLASSES_PER_TASK = 5
     N_TASKS = 20
+    HEAD_DIM = 100
     TRANSFORM = transforms.Compose(
             [transforms.RandomCrop(64, padding=4),
              transforms.RandomHorizontalFlip(),
@@ -94,8 +95,11 @@ class SequentialTinyImagenet(ContinualDataset):
              transforms.Normalize((0.4802, 0.4480, 0.3975),
                                   (0.2770, 0.2691, 0.2821))])
 
-    def get_data_loaders(self, args):
-        transform = get_aug(train=True, **args.aug_kwargs)
+    def get_data_loaders(self, args, divide_tasks=True):
+        if 'no_train_augs' in args.__dict__ and args.no_train_augs:
+            transform = get_aug(train=True, train_classifier=False, no_train_augs=True)
+        else:
+            transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
 
         train_dataset = TinyImagenet(base_path() + 'TINYIMG',

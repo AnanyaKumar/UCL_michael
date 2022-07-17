@@ -15,10 +15,42 @@ Dataset = namedtuple(
     ['name', 'val_metric', 'output_metrics', 'config_rel_path', 'slurm_data_cmd']
 )
 
+def build_metrics(num_tasks, knn=True, probe=True, task_il=True, class_il=True):
+    """
+    By default all are True.
+    Build metrics. knn and probe focuses on representation learning setting.
+    Task il keeps separate heads.
+    Class il uses the latest head.
+    Note class il applies to domain-il settings too, like FMOW.
+    """
+    output_metrics = []
+    if knn:
+        for i in range(num_tasks):
+            output_metrics.append(f"knn_acc_task_{i}")
+        output_metrics.append("knn_mean_acc")
+
+    if probe:
+        for i in range(num_tasks):
+            output_metrics.append(f"probe_acc_task_{i}")
+            output_metrics.append(f"probe_train_acc_task_{i}")
+        output_metrics.append("probe_mean_acc")
+    
+    if task_il:
+        for i in range(num_tasks):
+            output_metrics.append(f"task_il_acc{i}")
+        output_metrics.append("task_il_mean_acc")
+
+    if class_il:
+        for i in range(num_tasks):
+            output_metrics.append(f"class_il_acc{i}")
+        output_metrics.append("class_il_mean_acc")
+
+    return output_metrics
+
 cifar10_scl = Dataset(
     name='cifar10_scl',
     val_metric='knn_mean_acc',
-    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_mean_acc'],
+    output_metrics=build_metrics(5),
     config_rel_path='finetune_c10_scl.yaml',
     slurm_data_cmd=None
 )
@@ -26,7 +58,7 @@ cifar10_scl = Dataset(
 cifar10 = Dataset(
     name='cifar10',
     val_metric='knn_mean_acc',
-    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_mean_acc'],
+    output_metrics=build_metrics(5),
     config_rel_path='simsiam_c10.yaml',
     slurm_data_cmd=None
 )
@@ -34,7 +66,7 @@ cifar10 = Dataset(
 cifar100_scl = Dataset(
     name='cifar100_scl',
     val_metric='knn_mean_acc',
-    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_acc_task_5', 'knn_acc_task_6', 'knn_acc_task_7', 'knn_acc_task_8', 'knn_acc_task_9', 'knn_mean_acc'],
+    output_metrics=build_metrics(10),
     config_rel_path='finetune_c100_scl.yaml',
     slurm_data_cmd=None
 )
@@ -42,8 +74,16 @@ cifar100_scl = Dataset(
 cifar100 = Dataset(
     name='cifar100',
     val_metric='knn_mean_acc',
-    output_metrics=['knn_acc_task_0', 'knn_acc_task_1', 'knn_acc_task_2', 'knn_acc_task_3', 'knn_acc_task_4', 'knn_acc_task_5', 'knn_acc_task_6', 'knn_acc_task_7', 'knn_acc_task_8', 'knn_acc_task_9', 'knn_mean_acc'],
+    output_metrics=build_metrics(10),
     config_rel_path='simsiam_c100.yaml',
+    slurm_data_cmd=None
+)
+
+tiny_scl = Dataset(
+    name='tiny_scl',
+    val_metric='knn_mean_acc',
+    output_metrics=build_metrics(20),
+    config_rel_path='finetune_tiny_scl.yaml',
     slurm_data_cmd=None
 )
 
@@ -60,6 +100,7 @@ names_to_datasets = {
     'cifar10': cifar10,
     'cifar100_scl': cifar100_scl, 
     'cifar100': cifar100,
+    'tiny_scl': tiny_scl,
     "fmow": fmow
 }
 
@@ -115,12 +156,14 @@ def transform_unparsed(unparsed):
     all_res = process(unparsed_dic)
 
     for res in all_res:
-        for (k, v) in res['train'].items():
-            res['train.'+k] = v
-        res.pop('train')
-        for (k, v) in res['model'].items():
-            res['model.'+k] = v
-        res.pop('model')
+        if 'train' in res:
+            for (k, v) in res['train'].items():
+                res['train.'+k] = v
+            res.pop('train')
+        if 'model' in res:
+            for (k, v) in res['model'].items():
+                res['model.'+k] = v
+            res.pop('model')
         results.append(res)
     
     return all_res
@@ -142,8 +185,8 @@ def get_config_path(args, config_rel_path):
 def group_run_to_log_path(group_name, run_name, args):
     return args.log_dir + '/' + group_name + '/' + run_name
 
-def get_group_name(adapt_name, dataset_name):
-    return adapt_name+'_'+dataset_name
+def get_group_name(adapt_name, dataset_name, model_name):
+    return adapt_name+'_'+dataset_name+'_'+model_name
  
 def format_key_value(k, v):
     if type(v) == list:
@@ -181,8 +224,10 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     kwargs['tmp_par_ckp_dir'] = args.tmp_dir + '/' + group_name + '_' + run_name
 
     kwargs['project_name'] = project_name
+    kwargs['model.name'] = args.model
     kwargs['group_name'] = group_name
     kwargs['run_name'] = run_name
+    
     code_path = args.code_dir + '/' + 'main.py'
     return (get_python_cmd(code_path=code_path, python_path=args.python_path, kwargs=kwargs,
                            args=args),
@@ -219,7 +264,7 @@ def config_run(args, kwargs, config_path, run_name, group_name, project_name,
 def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix=''):
     run_name = hyperparams_to_str(hyperparams)
     run_name += run_name_suffix
-    group_name = get_group_name(adapt_name, dataset.name)
+    group_name = get_group_name(adapt_name, dataset.name, args.model)
     project_name = PROJECT_NAME
     kwargs = deepcopy(hyperparams)
     config_path = get_config_path(args, dataset.config_rel_path)
@@ -280,6 +325,8 @@ if __name__ == "__main__":
                         help='Experiment to run.')
     parser.add_argument('--dataset', type=str, required=True,
                         help='Dataset to train and test on.')
+    parser.add_argument('--model', type=str, required=True,
+                        help='Model to train and test on.')
     parser.add_argument('--num_replications', type=int, required=False, default=1,
                         help='Number of replication runs.')
     parser.add_argument('--seed', type=int, required=False, default=0,

@@ -26,6 +26,7 @@ from models.utils.continual_model import ContinualModel
 from models.utils.gradient import *
 from typing import Tuple
 from copy import deepcopy
+import shutil
 import os
 
 from ray import tune
@@ -35,7 +36,7 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
   probe_train_results = []
   probe_results = []
   for i in range(len(dataset.test_loaders)):
-    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft) 
+    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))
     probe_results.append(acc)
     probe_train_results.append(train_acc)
 
@@ -140,8 +141,9 @@ def save_model(model, args, t, epoch, dataset):
 
   print(f"Task Model saved to {model_path}")
 
-  with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
-    f.write(f'{model_path}')
+  if args.save_model:
+    with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
+      f.write(f'{model_path}')
   
   if hasattr(model, 'end_task'):
     model.end_task(dataset)
@@ -260,7 +262,6 @@ def trainable(config):
 
   # makes fraction of lp epochs compatible with lr scheduler
   # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
-
   dataset = get_dataset(args)
   dataset_copy = get_dataset(args)
   train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
@@ -393,7 +394,7 @@ def trainable(config):
       if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
         probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=False)
 
-      ## BELOW for task-il evaluation, not including for domain-il
+      ## BELOW for class-il and task-il evaluation, specific to supervised continual setting
 
       if args.cl_default:  
         if epoch > 0:
@@ -415,12 +416,14 @@ def trainable(config):
         if not args.debug_lpft and "tune" in os.environ["logging"]: 
           tune.report(class_il_mean_acc=mean_acc[0])
           tune.report(task_il_mean_acc=mean_acc_task_il[1])
-          for i in range(len(task_accs)):
-            tune.report(**{f"task_acc_{i}": task_accs[1][i]})
+          for i in range(len(task_accs[1])):
+            tune.report(**{f"class_il_acc_{i}": accs[1][i]})
+            tune.report(**{f"task_il_acc_{i}": task_accs[1][i]})
         if not args.debug_lpft and "wandb" in os.environ["logging"]: 
           wandb.log({'class_il_mean_acc': mean_acc[0]})
           wandb.log({'task_il_mean_acc': mean_acc_task_il[1]})  
           for i in range(len(task_accs[1])):            
+            wandb.log({f'class_il_acc_{i}': accs[0][i]})
             wandb.log({f'task_il_acc_{i}': task_accs[1][i]})
         if args.debug_lpft:
           print({'class_il_mean_acc': mean_acc[0]})
@@ -436,9 +439,6 @@ def trainable(config):
     if not args.train.save_best:
       save_model(model,args,t,epoch,dataset)
     
-    if args.train.probe_monitor and (not args.train.all_tasks_num_epochs or t == dataset.N_TASKS - 1):
-      # do a probe evaluate at end of task
-      probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results)
       
 
 
@@ -630,9 +630,12 @@ def main(device, args):
         args.eval_from = model_path
 
 if __name__ == "__main__":
-    args = get_args()
+    args, checkpoints_dir = get_args()
     train(args=args)
     completed_log_dir = args.log_dir.replace('in-progress', 'debug' if args.debug else 'completed')
     os.rename(args.log_dir, completed_log_dir)
+    if args.tmp_par_ckp_dir is not None:
+        new_checkpoints_dir = args.ckpt_dir
+        shutil.copytree(checkpoints_dir, new_checkpoints_dir)
     print(f'Log file has been saved to {completed_log_dir}')
 

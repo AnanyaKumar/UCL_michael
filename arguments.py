@@ -19,6 +19,7 @@ import collections.abc
 from datetime import datetime
 
 import utils.io_utils as io_utils
+from pathlib import Path
 
 
 class Namespace(object):
@@ -77,6 +78,14 @@ def fill_default_value(d, k, v):
     d = update(new_d, d) # this way, ensure config arguments isn't overridden
     return d
 
+def make_checkpoints_dir(log_dir):
+    checkpoints_dir = log_dir + '/checkpoints'
+    checkpoints_dir = Path(checkpoints_dir).resolve().expanduser()
+    if os.path.exists(checkpoints_dir):
+        shutil.rmtree(checkpoints_dir)
+    os.makedirs(checkpoints_dir)
+    return checkpoints_dir
+
 def populate_defaults(config):
     config = fill_default_value(config, 'project_name', 'continual_learning')
     config = fill_default_value(config, 'debug', False)
@@ -93,6 +102,7 @@ def populate_defaults(config):
     config = fill_default_value(config, 'last', False)
     config = fill_default_value(config, 'debug_lpft', False)
     config = fill_default_value(config, 'lpft', False)
+    config = fill_default_value(config, 'save_model', False)
     config = fill_default_value(config, 'save_as_orig', False)
     config = fill_default_value(config, 'validation', False)
     config = fill_default_value(config, 'ood_eval', False)
@@ -134,6 +144,7 @@ def get_args():
     enforce_arg(args, 'group_name')
     enforce_arg(args, 'run_name')
     enforce_arg(args, 'log_dir')
+    enforce_arg(args, 'tmp_par_ckp_dir')
 
     args.aug_kwargs = vars(args.aug_kwargs)
 
@@ -166,6 +177,11 @@ def get_args():
 
     os.makedirs(args.ckpt_dir, exist_ok=True)
 
+    if args.tmp_par_ckp_dir is not None:
+        checkpoints_dir = make_checkpoints_dir(args.tmp_par_ckp_dir)
+    else:
+        checkpoints_dir = make_checkpoints_dir(log_dir)
+
     # shutil.copy2(cl_args.config_file, args.log_dir)
 
     config_json = args.log_dir + '/config.json'
@@ -193,4 +209,4 @@ def get_args():
         'num_workers': args.dataset.num_workers,
     }
 
-    return args
+    return args, checkpoints_dir

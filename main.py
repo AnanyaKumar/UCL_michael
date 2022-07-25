@@ -15,7 +15,7 @@ from sklearn.model_selection import ParameterGrid
 from arguments import get_args, update_args, init_args, Namespace
 from augmentations import get_aug
 from models import get_model, get_num_params, get_head, get_features
-from tools import AverageMeter, knn_monitor, probe_monitor, logistic_monitor, Logger, file_exist_check
+from tools import AverageMeter, knn_monitor, probe_monitor, set_probe, logistic_monitor, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
 from utils.loggers import *
@@ -132,16 +132,16 @@ def save_model(model, args, t, epoch, dataset):
   elif args.last:
     model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}_last.pth")  
     
-
-  torch.save({
-    'epoch': epoch+1,
-    'state_dict':model.net.state_dict(),
-    'opt_state_dict':model.opt.state_dict()
-  }, model_path)
-
-  print(f"Task Model saved to {model_path}")
-
   if args.save_model:
+    torch.save({
+      'epoch': epoch+1,
+      'state_dict':model.net.state_dict(),
+      'opt_state_dict':model.opt.state_dict()
+    }, model_path)
+
+    print(f"Task Model saved to {model_path}")
+
+
     with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
       f.write(f'{model_path}')
   
@@ -318,8 +318,12 @@ def trainable(config):
       test_stats['task'] = [t]
 
       if args.lpft and (not args.train.ft_first or t):    
-        freeze_weights(model, args, only_log=epoch)          
+        freeze_weights(model, args, only_log=epoch > 0)
         if epoch == args.train.num_lp_epochs:
+          if args.train.sklearn_lp_probe:
+            print("initializing sklearn probe")
+            set_probe(model.net.backbone, dataset, memory_loader, test_loader, device, args.cl_default, t)
+          
           unfreeze_weights(model, args)
       if not args.train.train_first or not t:
         model.train()
@@ -636,6 +640,6 @@ if __name__ == "__main__":
     os.rename(args.log_dir, completed_log_dir)
     if args.tmp_par_ckp_dir is not None:
         new_checkpoints_dir = args.ckpt_dir
-        shutil.copytree(checkpoints_dir, new_checkpoints_dir)
+        shutil.copytree(checkpoints_dir, new_checkpoints_dir, dirs_exist_ok=True)
     print(f'Log file has been saved to {completed_log_dir}')
 

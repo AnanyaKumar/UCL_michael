@@ -117,6 +117,9 @@ def populate_defaults(config):
         'use_group_norm': False,
         'group_norm_num_groups': 32
     })
+    config = fill_default_value(config, 'train', {
+        'sklearn_lp_probe': False
+    })
     return config
 
 

@@ -257,7 +257,20 @@ def trainable(config):
     # os.environ['logging'] = "wandb,tune"
     os.environ['logging'] = "wandb"
   if not args.debug_lpft and "wandb" in os.environ["logging"]:
+    api = wandb.Api()
+    runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
+    if len(runs):
+      if runs[0].state == "finished":
+        print("Exiting, existing run already finished")
+        return
+      elif runs[0].state == "crashed":
+        print("Redoing run, previously it crashed")
+      else:
+        print(f"Run's state: {runs[0].state}, running")
+
+    user = os.environ["USER"]
     wandb.init(project=args.project_name, name=args.run_name, 
+                dir=f"/nlp/scr/{user}/wandb/",
                 group=args.group_name, config=Namespace.namespace_to_dict(deepcopy(args)))
 
   # makes fraction of lp epochs compatible with lr scheduler
@@ -449,15 +462,17 @@ def trainable(config):
 
 
 
-  tune.report(done=1)
+  if "tune" in os.environ["logging"]:
+    tune.report(done=1)
 
   if args.eval is not False and args.cl_default is False:
       args.eval_from = model_path
 
-  wandb.alert(
-    title="Done", 
-    text=f"Run with train config {config['train']} finished"
-  )
+  if "wandb" in os.environ["logging"]:
+    wandb.alert(
+      title="Done", 
+      text=f"Run with train config {config['train']} finished"
+    )
 
 
 
@@ -639,7 +654,9 @@ if __name__ == "__main__":
     completed_log_dir = args.log_dir.replace('in-progress', 'debug' if args.debug else 'completed')
     os.rename(args.log_dir, completed_log_dir)
     if args.tmp_par_ckp_dir is not None:
+      if args.save_model:
         new_checkpoints_dir = args.ckpt_dir
         shutil.copytree(checkpoints_dir, new_checkpoints_dir, dirs_exist_ok=True)
+        print(f'Model has been moved to {new_checkpoints_dir}')
     print(f'Log file has been saved to {completed_log_dir}')
 

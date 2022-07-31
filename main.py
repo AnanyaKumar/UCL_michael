@@ -56,26 +56,26 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
       wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
       wandb.log({f"probe_best_c_{i+1}": best_c})  
 
-  if end_task:    
-    all_probe_results.append(probe_results)
-    all_probe_train_results.append(probe_train_results)
-    if args.train.naive:
-      mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
-      mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
-    else:
-      mean_acc = np.mean(probe_results)
-      mean_train_acc = np.mean(probe_train_results)
-    train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
-    train_stats[f"probe_mean_acc"].append(mean_acc)
-    if not args.debug_lpft and "tune" in os.environ["logging"]: 
-      tune.report(**{f"probe_train_mean_acc": mean_train_acc})
-      tune.report(**{f"probe_mean_acc": mean_acc})
-    if args.debug_lpft:
-      print({f"probe_mean_acc": mean_acc})
-      print({f"probe_train_mean_acc": mean_train_acc})
-    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-      wandb.log({f"probe_mean_acc": mean_acc})
-      wandb.log({f"probe_train_mean_acc": mean_train_acc})
+
+  all_probe_results.append(probe_results)
+  all_probe_train_results.append(probe_train_results)
+  if args.train.naive:
+    mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
+    mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
+  else:
+    mean_acc = np.mean(probe_results)
+    mean_train_acc = np.mean(probe_train_results)
+  train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
+  train_stats[f"probe_mean_acc"].append(mean_acc)
+  if not args.debug_lpft and "tune" in os.environ["logging"]: 
+    tune.report(**{f"probe_train_mean_acc": mean_train_acc})
+    tune.report(**{f"probe_mean_acc": mean_acc})
+  if args.debug_lpft:
+    print({f"probe_mean_acc": mean_acc})
+    print({f"probe_train_mean_acc": mean_train_acc})
+  if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+    wandb.log({f"probe_mean_acc": mean_acc})
+    wandb.log({f"probe_train_mean_acc": mean_train_acc})
 
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None, debug=False) -> Tuple[list, list]:
@@ -260,13 +260,16 @@ def trainable(config):
     api = wandb.Api()
     runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
     if len(runs):
-      if runs[0].state == "finished":
-        print("Exiting, existing run already finished")
-        return
-      elif runs[0].state == "crashed":
-        print("Redoing run, previously it crashed")
-      else:
-        print(f"Run's state: {runs[0].state}, running")
+      for i in range(len(runs)):
+        if runs[i].state == "finished":
+          if not args.rerun:
+            print("Exiting, existing run already finished")
+        elif runs[i].state == "crashed":
+          continue
+        else:
+          continue
+
+      print("Redoing run, previously no runs finished")
 
     user = os.environ["USER"]
     wandb.init(project=args.project_name, name=args.run_name, 

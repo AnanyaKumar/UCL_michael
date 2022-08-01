@@ -20,15 +20,31 @@ def get_parent_folder(file_path):
     return parent_folder
 
 
-def get_result(file_path, val_metric, output_metrics, take_max=True, take_last=False):
+def get_result(file_path, val_metric, output_metrics, take_max=True, take_last="epoch"):
     df = pd.read_csv(file_path, sep='\t')
     if val_metric is not None and val_metric != 'LAST':
         if val_metric not in df:
             raise ValueError(f'{val_metric} column not in {file_path}')
+        min_task_id = min(df['task'])
+        max_task_id = max(df['task'])
+        min_task_entries = len(df[df['task'] == min_task_id])
+        max_task_entries = len(df[df['task'] == max_task_id])
+        assert min_task_entries == max_task_entries, "unequal entries between tasks"
         if take_max:
-            best_idx = (df[df['task'] == max(df['task'])] if take_last else df)[val_metric].idxmax()
+            if take_last == "task":
+                best_idx = df[df['task'] == max(df['task'])][val_metric].idxmax()
+            elif take_last == "epoch": 
+                best_idx = len(df) - 1
+            else:
+                best_idx = df[val_metric].idxmax()
         else:            
-            best_idx = (df[df['task'] == max(df['task'])] if take_last else df)[val_metric].idxmin()
+            if take_last == "task":
+                best_idx = df[df['task'] == max(df['task'])][val_metric].idxmin()
+            elif take_last == "epoch": 
+                best_idx = len(df) - 1
+            else:
+                best_idx = df[val_metric].idxmin()
+
         best_value = df[val_metric][best_idx]
     else:
         best_idx = -1
@@ -44,9 +60,10 @@ def get_result(file_path, val_metric, output_metrics, take_max=True, take_last=F
         
     run_name = [('name', file_path.split('/')[-2]), ('wandb_url', "")]
     best_res = run_name + best_res
+    
     return best_res, best_value
 
-def summarize_results(results_dir, val_metric, output_metrics, replication=False, use_all=False, max_num=None, take_last=False):
+def summarize_results(results_dir, val_metric, output_metrics, replication=False, use_all=False, max_num=None, take_last="epoch"):
     # If use_all is True, then look at all stats.tsv files.
     # Otherwise, if replication is True look for replication files, if false ignore replicatin files.
     # max_num is for linear probing, and uses only the first max_num runs.
@@ -63,7 +80,11 @@ def summarize_results(results_dir, val_metric, output_metrics, replication=False
         parent_folder = get_parent_folder(file_path)
         if use_all or (('replication' in parent_folder and replication) or
                        ('replication' not in parent_folder and not replication)):
-            res_row, val_value = get_result(file_path, val_metric, output_metrics, take_last=take_last)
+            try:
+                res_row, val_value = get_result(file_path, val_metric, output_metrics, take_last=take_last)
+            except AssertionError: 
+                print(f"{file_path} fails assertion")
+                continue
             results_list.append(OrderedDict(res_row))
             val_values_list.append(val_value)
     res = pd.DataFrame(results_list)

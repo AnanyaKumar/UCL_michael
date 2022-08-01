@@ -25,37 +25,51 @@ def remove_replication_info(s):
     return s
 
 
-def get_all_results(val_metric, dir_paths, output_metrics, take_last=False):
+def get_all_results(val_metric, dir_paths, output_metrics, take_last="epoch", verbose=False):
     results, best, dirs = [], [], []
     for dir_path in dir_paths:
         res, val_values_list, file_paths = summarize_results(
                 dir_path, val_metric, output_metrics, take_last=take_last)
-
+     
         if len(res) == 0:
             continue
+
         res['group'] = res['name'].apply(remove_replication_info)        
         grouped = res.groupby('group')
         means = grouped.mean()
         counts = grouped.count()
         counts.drop(labels=['name', 'wandb_url'], axis=1)
+   
         stderrs = 1.645 * (grouped.std() / np.sqrt(counts))
         stderrs = stderrs[means.columns]
         min_count = grouped.count().iloc[:,0].min()
-        if val_metric == 'LAST':
-            best_row_mean = means.iloc[[-1]]
-            best_row_std = stderrs.iloc[[-1]]
+
+        def process_group(group, means, stderrs, val_metric, dir_path):                            
+            row_mean = means.loc[[group]] if val_metric != 'LAST' else means.iloc[[-1]]
+            row_std = stderrs.loc[[group]] if val_metric != 'LAST' else stderrs.iloc[[-1]]                
+            row_mean['name'] = dir_path[5:]
+            row_std['name'] = dir_path[5:] + ' (stddev)'
+
+            for row in [row_mean, row_std]:
+                row['group'] = row.index
+                row.set_index('name')
+
+            return row_mean, row_std
+
+
+        if verbose:
+            assert val_metric != "LAST"
+            for group in means.index:  
+                best.append(process_group(group, means, stderrs, val_metric, dir_path))
+                dirs.append(dir_path)
         else:
-            best_group = means[val_metric].idxmax()
-            best_row_mean = means.loc[[best_group]]
-            best_row_std = stderrs.loc[[best_group]]
-        best_row_mean['name'] = dir_path[5:]
-        best_row_std['name'] = dir_path[5:] + ' (stddev)'
-        for best_row in [best_row_mean, best_row_std]:
-            best_row['group'] = best_row.index
-            best_row.set_index('name')
+            group = means[val_metric].idxmax()
+            best.append(process_group(group, means, stderrs, val_metric, dir_path))
+            dirs.append(dir_path)
+
         results.append(res)
-        best.append((best_row_mean, best_row_std))
-        dirs.append(dir_path)
+                  
+        
     return results, best, dirs
 
 
@@ -70,15 +84,17 @@ if __name__ == '__main__':
                         help='Metrics to output.')
     parser.add_argument('--output_file', type=str,
                         help='Path to output results, should end with .tsv')
-    parser.add_argument('--take_last', action='store_true', help="Take last epoch, used in continual learning")
+    parser.add_argument('--take_last', choices=['task', 'epoch'], help='Pick best run using last epoch, or early stop last task')
+    parser.add_argument('-v', action='store_true', help="Show all groups, not just the best one for each dir path")
     parser.add_argument('-s', action='store_true', help="Short version: Do not show column names")
     args = parser.parse_args()
     # Get all folders satisfying glob.
     dir_paths = glob.glob(args.results_dir_glob, recursive=False)
     dir_paths = [dir_path for dir_path in dir_paths if 'linprobe' not in dir_path]
+
     output = ''
     for val_metric in args.val_metrics:
-        results, best, dirs = get_all_results(val_metric, dir_paths, args.output_metrics, take_last=args.take_last)
+        results, best, dirs = get_all_results(val_metric, dir_paths, args.output_metrics, take_last=args.take_last, verbose=args.v)
         output += '\n\n\n'
         output += f'Early stopped based on {val_metric}:\n\n'
         output_header = True
@@ -100,7 +116,7 @@ if __name__ == '__main__':
         if args.output_file[-4:] != '.tsv':
             raise ValueError('--output_file should end with .tsv')
         output_file = args.output_file
-    with open(output_file, "w") as write_file:
+    with open(output_file, "w+") as write_file:
         write_file.write(output)
     print('Saved results to ' + output_file)
 

@@ -224,7 +224,7 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     kwargs['tmp_par_ckp_dir'] = args.tmp_dir + '/' + group_name + '_' + run_name
 
     kwargs['project_name'] = project_name
-    kwargs['model.name'] = args.model
+    kwargs['model.cl_model'] = args.model
     kwargs['group_name'] = group_name
     kwargs['run_name'] = run_name
     

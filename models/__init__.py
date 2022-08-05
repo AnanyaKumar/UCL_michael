@@ -62,6 +62,17 @@ def get_backbone(backbone, dataset, castrate=True, args=None):
     return backbone
 
 
+def set_linear_layer(layer, coef, intercept, start_idx, end_idx):
+    layer.weight.requires_grad_(False)
+    layer.bias.requires_grad_(False)
+    coef_tensor = torch.tensor(coef, dtype=layer.weight.dtype).to(layer.weight.device)
+    bias_tensor = torch.tensor(intercept, dtype=layer.bias.dtype).to(layer.bias.device)
+    layer.weight[start_idx: end_idx] = coef_tensor
+    layer.bias[start_idx: end_idx] = bias_tensor
+    layer.weight.requires_grad_(True)
+    layer.bias.requires_grad_(True)
+
+
 def get_all_models():
     if os.path.exists('models'):
         models_dir = os.listdir('models')
@@ -90,6 +101,6 @@ def get_model(args, device, len_train_loader, dataset, transform):
         mod = importlib.import_module('models.' + model)
         class_name = {x.lower():x for x in mod.__dir__()}[model.replace('_', '')]
         names[model] = getattr(mod, class_name)
-    
+
     return names[args.model.cl_model](backbone, loss, args, len_train_loader, transform)
 

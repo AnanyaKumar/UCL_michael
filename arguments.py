@@ -102,7 +102,7 @@ def populate_defaults(config):
     config = fill_default_value(config, 'last', False)
     config = fill_default_value(config, 'debug_lpft', False)
     config = fill_default_value(config, 'lpft', False)
-    config = fill_default_value(config, 'rerun', False)
+    config = fill_default_value(config, 'rerun', True)
     config = fill_default_value(config, 'save_model', False)
     config = fill_default_value(config, 'save_as_orig', False)
     config = fill_default_value(config, 'validation', False)

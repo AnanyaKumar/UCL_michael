@@ -35,7 +35,7 @@ class Der(ContinualModel):
 
         loss.backward()
         self.opt.step()
-        data_dict.update({'lr': self.args.train.base_lr})
+        # data_dict.update({'lr': self.args.train.base_lr})
         self.buffer.add_data(examples=notaug_inputs, logits=outputs.data)
 
         return data_dict

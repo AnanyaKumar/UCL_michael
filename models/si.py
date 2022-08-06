@@ -51,7 +51,7 @@ class SI(ContinualModel):
         loss.backward()
         nn.utils.clip_grad.clip_grad_value_(self.net.parameters(), 1)
         self.opt.step()
-        data_dict.update({'lr': self.args.train.base_lr})
+        # data_dict.update({'lr': self.args.train.base_lr})
 
         self.small_omega += self.args.train.base_lr * self.net.backbone.get_grads().data ** 2
 

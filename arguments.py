@@ -103,6 +103,8 @@ def populate_defaults(config):
     config = fill_default_value(config, 'debug_lpft', False)
     config = fill_default_value(config, 'lpft', False)
     config = fill_default_value(config, 'rerun', True)
+    config = fill_default_value(config, 'is_eval_script', False)
+    config = fill_default_value(config, 'probe_train_frac', 1.0)
     config = fill_default_value(config, 'save_model', False)
     config = fill_default_value(config, 'save_as_orig', False)
     config = fill_default_value(config, 'validation', False)
@@ -172,27 +174,38 @@ def get_args():
 
     # args.log_dir = os.path.join(args.log_dir, 'in-progress_'+datetime.now().strftime('%m%d%H%M%S_')+args.name)
     args.log_dir = os.path.join(args.log_dir, args.group_name, args.run_name)
-    if os.path.isdir(args.log_dir):
+    if os.path.isdir(args.log_dir) and args.rerun and not args.is_eval_script:
         print("Removed old run directory at {}.".format(args.log_dir))
         shutil.rmtree(args.log_dir)
-    os.makedirs(args.log_dir, exist_ok=False)
-    print(f'creating file {args.log_dir}')
+
+    if not args.is_eval_script:
+        os.makedirs(args.log_dir, exist_ok=False)
+        print(f'creating file {args.log_dir}')
+        
     args.ckpt_dir = os.path.join(args.log_dir, 'checkpoints')
 
-    os.makedirs(args.ckpt_dir, exist_ok=True)
+    if os.path.isdir(args.ckpt_dir) and args.rerun and not args.is_eval_script:
+        shutil.rmtree(args.ckpt_dir)
 
-    if args.tmp_par_ckp_dir is not None:
-        checkpoints_dir = make_checkpoints_dir(args.tmp_par_ckp_dir)
+    if not args.is_eval_script:
+        if args.tmp_par_ckp_dir is not None:
+            checkpoints_dir = make_checkpoints_dir(args.tmp_par_ckp_dir)
+        else:
+            checkpoints_dir = make_checkpoints_dir(log_dir)
+
+        # shutil.copy2(cl_args.config_file, args.log_dir)
     else:
-        checkpoints_dir = make_checkpoints_dir(log_dir)
+        if args.tmp_par_ckp_dir is not None:
+            checkpoints_dir = args.tmp_par_ckp_dir + '/checkpoints'
+        else:
+            checkpoints_dir = log_dir + '/checkpoints'
 
-    # shutil.copy2(cl_args.config_file, args.log_dir)
-
-    config_json = args.log_dir + '/config.json'
-    args_dict = namespace_to_dict(copy.deepcopy(args))
-    print(args_dict)
-    with open(config_json, 'w') as f:
-        json.dump(args_dict, f)
+    if not args.is_eval_script:
+        config_json = args.log_dir + '/config.json'
+        args_dict = namespace_to_dict(copy.deepcopy(args))
+        print(args_dict)
+        with open(config_json, 'w') as f:
+            json.dump(args_dict, f)
     
     set_deterministic(args.seed)   
        

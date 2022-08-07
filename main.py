@@ -32,7 +32,7 @@ import os
 from ray import tune
 import wandb
 
-def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=True):
+def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats=None, test_stats=None, end_task=True):
   probe_train_results = []
   probe_results = []
   for i in range(len(dataset.test_loaders)):
@@ -40,9 +40,9 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
     probe_results.append(acc)
     probe_train_results.append(train_acc)
 
-    test_stats[f"probe_acc_task_{i+1}"].append(acc)
-    train_stats[f"probe_train_acc_task_{i+1}"].append(train_acc)
-    test_stats[f"probe_best_c_{i+1}"].append(best_c)
+    if test_stats: test_stats[f"probe_acc_task_{i+1}"].append(acc)
+    if train_stats: train_stats[f"probe_train_acc_task_{i+1}"].append(train_acc)
+    if test_stats: test_stats[f"probe_best_c_{i+1}"].append(best_c)
     if not args.debug_lpft and "tune" in os.environ["logging"]: 
       tune.report(**{f"probe_acc_task_{i+1}": acc})
       tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
@@ -65,8 +65,8 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
   else:
     mean_acc = np.mean(probe_results)
     mean_train_acc = np.mean(probe_train_results)
-  train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
-  train_stats[f"probe_mean_acc"].append(mean_acc)
+  if train_stats: train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
+  if train_stats: train_stats[f"probe_mean_acc"].append(mean_acc)
   if not args.debug_lpft and "tune" in os.environ["logging"]: 
     tune.report(**{f"probe_train_mean_acc": mean_train_acc})
     tune.report(**{f"probe_mean_acc": mean_acc})
@@ -124,13 +124,17 @@ def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifie
 
 
 def save_model(model, args, t, epoch, dataset):
+  if isinstance(t, list):
+    task_str = f"{t[0]}:{t[-1]+1}"
+  else:
+    task_str = t
   if args.debug_lpft:
     return
-  model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}.pth")
+  model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}.pth")
   if args.save_as_orig:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}_orig.pth")
+    model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}_orig.pth")
   elif args.last:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}_last.pth")  
+    model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}_last.pth")  
     
   if args.save_model:
     torch.save({
@@ -142,8 +146,8 @@ def save_model(model, args, t, epoch, dataset):
     print(f"Task Model saved to {model_path}")
 
 
-    with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'w+') as f:
-      f.write(f'{model_path}')    
+    with open(os.path.join(args.log_dir, f"checkpoint_path.txt"), 'a+') as f:
+      f.write(f'{model_path}\n')    
 
 def layer_taxonomy(name, cl_default):
   """
@@ -306,6 +310,7 @@ def trainable(config):
 
   for t in range(dataset.N_TASKS):
     best_current_task = float("-inf")
+    best_mean_task = float("-inf")
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs == 0)
     if args.last and t < dataset.N_TASKS - 1: 
       print("continuing cause only train last task...")
@@ -375,7 +380,6 @@ def trainable(config):
         results, results_mask_classes = [], []
         for i in range(len(dataset.test_loaders)):
           acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
-
           results.append(acc)
           test_stats[f'knn_acc_task_{i+1}'].append(acc)
           if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
@@ -403,10 +407,16 @@ def trainable(config):
         global_progress.set_postfix(epoch_dict)
         logger.update_scalers(epoch_dict)
 
-      if args.train.save_best and results[-1] > best_current_task:
-        print(f"{results[-1]} beats {best_current_task}, saving model...")
-        best_current_task = results[-1]
-        save_model(model,args,t,epoch,dataset)
+      if args.train.save_best:
+        if results[-1] > best_current_task:
+          print(f"{results[-1]} beats {best_current_task} on current task, saving model...")
+          best_current_task = results[-1]
+          save_model(model, args, t, epoch, dataset)
+        
+        if mean_acc > best_mean_task:
+          print(f"{mean_acc} beats {best_mean_task} on mean acc of tasks, saving model...")
+          best_mean_task = mean_acc
+          save_model(model, args, list(range(t+1)), epoch, dataset)
 
       if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
         probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=False)
@@ -657,7 +667,7 @@ if __name__ == "__main__":
     if args.tmp_par_ckp_dir is not None:
       if args.save_model:
         new_checkpoints_dir = args.ckpt_dir
-        shutil.copytree(checkpoints_dir, new_checkpoints_dir, dirs_exist_ok=True)
+        shutil.copytree(checkpoints_dir, new_checkpoints_dir)
         print(f'Model has been moved to {new_checkpoints_dir}')
     print(f'Log file has been saved to {completed_log_dir}')
 

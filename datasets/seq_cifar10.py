@@ -34,16 +34,13 @@ class SequentialCIFAR10(ContinualDataset):
             transform = get_aug(train=True, **args.aug_kwargs)
         test_transform = get_aug(train=False, train_classifier=False, **args.aug_kwargs)
 
-        if 'train_len' in args.__dict__:
+        if 'probe_train_frac' in args.__dict__ and args.probe_train_frac < 1.0:
             train_dataset = CIFAR10Subsampled(
-                base_path() + 'CIFAR10', train=True, train_len=args.train_len,
+                base_path() + 'CIFAR10', train=True, probe_train_frac=args.probe_train_frac,
                 download=True, transform=transform)
-            memory_dataset = CIFAR10(
-                base_path() + 'CIFAR10', train=True,
-                download=True, transform=test_transform)
-            # memory_dataset = CIFAR10Subsampled(
-            #    base_path() + 'CIFAR10', train=True, train_len=args.train_len,
-            #    download=True, transform=test_transform)
+            memory_dataset = CIFAR10Subsampled(
+               base_path() + 'CIFAR10', train=True, probe_train_frac=args.probe_train_frac,
+               download=True, transform=test_transform)
         else:
             train_dataset = CIFAR10(
                 base_path() + 'CIFAR10', train=True,

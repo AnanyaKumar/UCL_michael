@@ -44,34 +44,38 @@ class Logger(object):
             res.append(metric_sum[epoch_idx] / metric_counts[epoch_idx])
         return res
 
-    def process_stats(self, train_stats, test_stats):
+    def process_stats(self, train_stats, test_stats=None):
         # Following baseline_train.py in https://github.com/AnanyaKumar/transfer_learning
         # train_stats and test_stats are dictionaries mapping metrics to either:
-        # List of (batch idx, value) for all epochs (e.g. loss, acc)
+        # List of (epoch idx, value) for all epochs (e.g. loss, acc)
         # List of values, one for each epoch
 
         for (k, v) in train_stats.items():
             if len(v) > 1:
                 v = self.accumulate_batch_tuples(v)
-            train_stats[k] = round(v[0], 2)
-            
-        for (k, v) in test_stats.items():
-            if len(v) > 1:
-                v = self.accumulate_batch_tuples(v)
-            test_stats[k] = round(v[0], 2)
+            train_stats[k] = v[0] if type(v[0]) == str else round(v[0], 2)
+
+        if test_stats:                            
+            for (k, v) in test_stats.items():
+                if len(v) > 1:
+                    v = self.accumulate_batch_tuples(v)
+                test_stats[k] = v[0] if type(v[0]) == str else round(v[0], 2)
                 
 
-    def write_tsv(self, train_metrics, test_metrics):
-        train_df = pd.DataFrame(train_metrics)
-        test_df = pd.DataFrame(test_metrics)
-        # for continual learning, will see multiple repeats of the same epoch
-        num_epochs = max(train_df['epoch']) + 1
-        train_df['temp'] = train_df['task'] * num_epochs + train_df['epoch']
-        test_df['temp'] = test_df['task'] * num_epochs + test_df['epoch']
-        df = train_df.merge(test_df, on='temp', suffixes=[None, '_dup'])
-        df = df.drop('temp', 1).drop('epoch_dup', 1).drop('task_dup', 1)
-        
-        df.to_csv(self.log_dir + '/stats.tsv', sep='\t')
+    def write_tsv(self, train_metrics, test_metrics=None, file="stats.tsv"):        
+        train_df = pd.DataFrame(train_metrics)  
+        num_epochs = max(train_df['epoch']) + 1      
+        if test_metrics:
+            test_df = pd.DataFrame(test_metrics)
+            test_df['temp'] = test_df['task'] * num_epochs + test_df['epoch']
+            train_df['temp'] = train_df['task'] * num_epochs + train_df['epoch']  
+            df = train_df.merge(test_df, on='temp', suffixes=[None, '_dup'])
+            df = df.drop('temp', 1).drop('epoch_dup', 1).drop('task_dup', 1)   
+            # for continual learning, will see multiple repeats of the same epoch                              
+        else:
+            df = train_df
+             
+        df.to_csv(self.log_dir + '/' + file, sep='\t')
 
 
 

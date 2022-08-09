@@ -228,7 +228,7 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     kwargs['group_name'] = group_name
     kwargs['run_name'] = run_name
     
-    code_path = args.code_dir + '/' + 'main.py'
+    code_path = args.code_dir + '/' + ('probe_eval_alltasks.py' if args.is_eval_script else 'main.py')
     return (get_python_cmd(code_path=code_path, python_path=args.python_path, kwargs=kwargs,
                            args=args),
             kwargs['log_dir'])
@@ -238,13 +238,15 @@ def run_sbatch(cmd, job_name, args):
     sbatch_script_path = args.scripts_dir + '/' + args.sbatch_script_name 
     slurm_cmd = f'sbatch --partition={args.partition} --job-name={job_name} --output={output_path} '
     slurm_cmd += f' {sbatch_script_path} '
-    slurm_cmd += f'"{cmd}"'
+    if args.is_eval_script:
+        cmd += '--is_eval_script=True '
+    slurm_cmd += f'"{cmd}"'    
     print(slurm_cmd + '\n')
     if not args.print_command_only:
         output = subprocess.check_output(shlex.split(slurm_cmd)).decode('utf8')
         job_names = list(re.findall(r'\d+', output))
         assert(len(job_names) == 1)
-        return job_names[0]
+        return job_names[0]    
 
 
 def run_job(cmd, job_name, args):
@@ -261,8 +263,9 @@ def config_run(args, kwargs, config_path, run_name, group_name, project_name,
     return run_job(cmd, job_name, args)
 
 
-def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix=''):
-    run_name = hyperparams_to_str(hyperparams)
+def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix='', 
+                    ignore_name_hypers={}):
+    run_name = hyperparams_to_str(hyperparams, ignore_name_hypers=ignore_name_hypers)
     run_name += run_name_suffix
     group_name = get_group_name(adapt_name, dataset.name, args.model)
     project_name = PROJECT_NAME
@@ -278,7 +281,7 @@ def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix=''):
     
 
 def replicated_sweep(adapt_name, dataset, hyperparams_list, num_replications,
-                     args):
+                     args, ignore_name_hypers={}):
     # Run multiple replications for each sweep run.
     sweep_ids = []
     for i in range(num_replications):
@@ -286,7 +289,8 @@ def replicated_sweep(adapt_name, dataset, hyperparams_list, num_replications,
             kwargs = deepcopy(hyperparams)
             kwargs['seed'] = args.seed + i
             job_id = run_adapt_sweep(adapt_name, dataset,
-                hyperparams=kwargs, args=args, run_name_suffix='_run'+str(i))
+                hyperparams=kwargs, args=args, run_name_suffix='_run'+str(i), 
+                    ignore_name_hypers=ignore_name_hypers)
             # Job id of -1 means we didn't run the job because it's already run.
             if job_id != -1:
                 sweep_ids.append(job_id)
@@ -299,13 +303,18 @@ def lpft_experiments(args, unparsed):
     hyperparameters_list = transform_unparsed(unparsed)
 
     if args.only_one_run:
-        hyperparameters_list = [hyperparameters_list[0]]
+        hyperparameters_list = [hyperparameters_list[0]]       
+
+    if args.is_eval_script:
+        # some extra assertions
+        assert 'probe_train_frac' in hyperparameters_list[0]
+        assert not hyperparameters_list[0]['rerun']
     
     num_replications = args.num_replications
     
     all_ids = replicated_sweep(
         adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
-        num_replications=num_replications, args=args)
+        num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun', 'probe_train_frac'})
     
     print(all_ids)
 
@@ -356,5 +365,7 @@ if __name__ == "__main__":
                               '(also do not run replications).'), required=False)
     parser.add_argument('--print_command_only', action='store_true',
                         help='Only print sbatch command to debug', required=False)
+    parser.add_argument('--is_eval_script', action='store_true',
+                        help='Run probe evaluation', required=False)
     args, unparsed = parser.parse_known_args()
     main(args, unparsed)

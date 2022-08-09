@@ -7,10 +7,11 @@ from tqdm import tqdm
 from arguments import get_args, init_args
 from augmentations import get_aug
 from models import get_model, get_backbone
-from tools import AverageMeter, knn_monitor
+from tools import AverageMeter, knn_monitor, probe_evaluate, Logger
 from datasets import get_dataset
 from models.optimizers import get_optimizer, LR_Scheduler
 from utils.loggers import *
+from collections import defaultdict
 
 
 def knn_evaluate_single(model, dataset, test_loader, memory_loader, device, k, last=False) -> Tuple[list, list, list, list]:
@@ -27,6 +28,35 @@ def probe_evaluate_single(model, dataset, test_loader, memory_loader, all_probe_
     return knn_acc
 
 
+def evaluate(model, model_path, args, device, dataset_copy, dataset, test_stats, task_str):
+  test_stats['task_str'].append(task_str)
+  save_dict = torch.load(model_path, map_location='cpu')
+  test_stats['epoch'].append(save_dict['epoch'])
+  msg = model.net.backbone.load_state_dict({k.split('backbone.')[1]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=True)
+  model = model.to(args.device)
+
+  if args.train.knn_monitor:
+    task_knn_acc = []
+    for t1 in tqdm(range(0, dataset_copy.N_TASKS), desc='Inner tasks'):
+      train_loader, memory_loader, test_loader = dataset_copy.train_loaders[t1], dataset_copy.memory_loaders[t1], dataset_copy.test_loaders[t1]
+      t1_knn_acc = knn_evaluate_single(model, dataset_copy, test_loader, memory_loader, device, t1)
+      task_knn_acc.append(t1_knn_acc)
+      test_stats[f'knn_acc_task_{t1}'].append(t1_knn_acc)
+    test_stats[f'knn_mean_acc'].append(np.mean(task_knn_acc))
+    print(f'Task {task_str} {args.probe_train_frac}-knn probe: {task_knn_acc}')
+
+  if args.train.probe_monitor:
+    for t1 in tqdm(range(0, dataset_copy.N_TASKS), desc='Inner tasks'):
+      train_loader, memory_loader, test_loader = dataset_copy.train_loaders[t1], dataset_copy.memory_loaders[t1], dataset_copy.test_loaders[t1]
+      all_probe_acc = all_probe_train_acc = []
+      probe_evaluate(args, t1, dataset_copy, model, device, memory_loader, all_probe_acc, all_probe_train_acc, end_task=False)
+      test_stats[f'probe_acc_task_{t1}'].append(all_probe_acc[-1][t1])
+      test_stats[f'probe_acc_train_task_{t1}'].append(all_probe_train_acc[-1][t1])
+    test_stats[f'probe_mean_acc'].append(np.mean(all_probe_acc[-1]))
+    test_stats[f'probe_train_mean_acc'].append(np.mean(all_probe_train_acc[-1]))
+    print(f'Task {task_str} {args.probe_train_frac}-linear probe: {all_probe_acc[-1]}')
+
+
 def main(device, args):
     config = {"default_args": vars(args), "train": vars(args.train)}
     args = config["default_args"]
@@ -37,42 +67,43 @@ def main(device, args):
     dataset_copy = get_dataset(args)
     train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
     model = get_model(args, device, len(train_loader), dataset_copy, dataset_copy.get_transform(args))
+    logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
     
+    if args.train.disable_logging:
+      os.environ['logging'] = ""
+    else:
+      # os.environ['logging'] = "wandb,tune"
+      os.environ['logging'] = "wandb"
+
     for t in range(dataset_copy.N_TASKS - 1):
         _, _, _ = dataset_copy.get_data_loaders(args)
 
+    test_metrics = []    
     knn_acc = []
     all_probe_acc, all_probe_train_acc = [], []
-    for t in tqdm(range(0, dataset_copy.N_TASKS), desc='Evaluating'):
+    for t in tqdm(range(-1, dataset_copy.N_TASKS), desc='Evaluating'):
+      test_stats = defaultdict(list)      
+      if t < 0:
+        task_str = f"0:{dataset_copy.N_TASKS}"        
+      else:
+        task_str = t 
+      
       dataset = get_dataset(args)
-      if os.path.exists(os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}.pth")):
-        model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{t}.pth")
-      elif os.path.exists(os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{t}.pth")):
+      if os.path.exists(os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{task_str}.pth")):
+        model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{task_str}.pth")
+      elif os.path.exists(os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}.pth")):
         # to debug on same machine as training
-        model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{t}.pth")
+        model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}.pth")
       else:
         raise AssertionError("checkpoint path doesn't exist")
 
-      save_dict = torch.load(model_path, map_location='cpu')
-      msg = model.net.backbone.load_state_dict({k.split('backbone.')[1]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=True)
-      model = model.to(args.device)
-    
-      if args.train.knn_monitor:
-        task_knn_acc = []
-        for t1 in tqdm(range(0, dataset_copy.N_TASKS), desc='Inner tasks'):
-          train_loader, memory_loader, test_loader = dataset.get_data_loaders(args)
-          t1_knn_acc = knn_evaluate_single(model, dataset, test_loader, memory_loader, device, t1)
-          task_knn_acc.append(t1_knn_acc)
-        knn_acc.append(task_knn_acc)
-        print(f'Task {t} {args.probe_train_frac}-knn probe: {task_knn_acc}')
+      evaluate(model, model_path, args, device, dataset_copy, dataset, test_stats, task_str)          
+      
+      test_metrics.append(test_stats)
+      logger.process_stats(test_stats)
+      test_metrics.append(test_stats)
+      logger.write_tsv(test_metrics, file=f"{args.probe_train_frac}-probe_eval.tsv")
 
-      if args.train.probe_monitor:
-        for t1 in tqdm(range(0, dataset_copy.N_TASKS), desc='Inner tasks'):
-          train_loader, memory_loader, test_loader = dataset.train_loaders[-1], dataset.memory_loaders[-1], dataset.test_loaders[-1]
-          probe_evaluate(args, t1, dataset, model, device, memory_loader, all_probe_acc, all_probe_train_acc, end_task=False)
-        print(f'Task {t} {args.probe_train_frac}-linear probe: {all_probe_acc[-1]}')
-    
-    breakpoint()
 
     # mean_knn_acc = sum(knn_acc[-1][:len(knn_acc[-1])]) / len(knn_acc[-1])
     # print(f'KNN accuracy on Task {t1}: {mean_knn_acc}')
@@ -84,4 +115,5 @@ def main(device, args):
 
 if __name__ == "__main__":
     args, checkpoints_dir = get_args()
+    breakpoint()
     main(device=args.device, args=args)

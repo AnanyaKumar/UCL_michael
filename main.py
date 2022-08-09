@@ -15,7 +15,7 @@ from sklearn.model_selection import ParameterGrid
 from arguments import get_args, update_args, init_args, Namespace
 from augmentations import get_aug
 from models import get_model, get_num_params, get_head, get_features
-from tools import AverageMeter, knn_monitor, probe_monitor, set_probe, logistic_monitor, Logger, file_exist_check
+from tools import AverageMeter, knn_monitor, probe_monitor, set_probe, probe_evaluate, Logger, file_exist_check
 from datasets import get_dataset
 from datetime import datetime
 from utils.loggers import *
@@ -31,52 +31,6 @@ import os
 
 from ray import tune
 import wandb
-
-def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats=None, test_stats=None, end_task=True):
-  probe_train_results = []
-  probe_results = []
-  for i in range(len(dataset.test_loaders)):
-    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))
-    probe_results.append(acc)
-    probe_train_results.append(train_acc)
-
-    if test_stats: test_stats[f"probe_acc_task_{i+1}"].append(acc)
-    if train_stats: train_stats[f"probe_train_acc_task_{i+1}"].append(train_acc)
-    if test_stats: test_stats[f"probe_best_c_{i+1}"].append(best_c)
-    if not args.debug_lpft and "tune" in os.environ["logging"]: 
-      tune.report(**{f"probe_acc_task_{i+1}": acc})
-      tune.report(**{f"probe_train_acc_task_{i+1}": train_acc})
-      tune.report(**{f"probe_best_c_{i+1}": best_c})
-    if args.debug_lpft:
-      print({f"probe_acc_task_{i+1}": acc})
-      print({f"probe_train_acc_task_{i+1}": train_acc})
-      print({f"probe_best_c_{i+1}": best_c})
-    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-      wandb.log({f"probe_acc_task_{i+1}": acc})
-      wandb.log({f"probe_train_acc_task_{i+1}": train_acc})
-      wandb.log({f"probe_best_c_{i+1}": best_c})  
-
-
-  all_probe_results.append(probe_results)
-  all_probe_train_results.append(probe_train_results)
-  if args.train.naive:
-    mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
-    mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
-  else:
-    mean_acc = np.mean(probe_results)
-    mean_train_acc = np.mean(probe_train_results)
-  if train_stats: train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
-  if train_stats: train_stats[f"probe_mean_acc"].append(mean_acc)
-  if not args.debug_lpft and "tune" in os.environ["logging"]: 
-    tune.report(**{f"probe_train_mean_acc": mean_train_acc})
-    tune.report(**{f"probe_mean_acc": mean_acc})
-  if args.debug_lpft:
-    print({f"probe_mean_acc": mean_acc})
-    print({f"probe_train_mean_acc": mean_train_acc})
-  if not args.debug_lpft and "wandb" in os.environ["logging"]: 
-    wandb.log({f"probe_mean_acc": mean_acc})
-    wandb.log({f"probe_train_mean_acc": mean_train_acc})
-
 
 def evaluate(model: ContinualModel, dataset: ContinualDataset, device, classifier=None, fc=None, debug=False) -> Tuple[list, list]:
     """
@@ -254,9 +208,12 @@ def trainable(config):
 
   if args.train.disable_logging:
     os.environ['logging'] = ""
+  elif args.is_eval_script:
+      raise NotImplementedError
   else:
     # os.environ['logging'] = "wandb,tune"
     os.environ['logging'] = "wandb"
+    
   if not args.debug_lpft and "wandb" in os.environ["logging"]:
     api = wandb.Api()
     runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
@@ -381,11 +338,11 @@ def trainable(config):
         for i in range(len(dataset.test_loaders)):
           acc, acc_mask = knn_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)), debug=args.debug and args.debug_lpft)             
           results.append(acc)
-          test_stats[f'knn_acc_task_{i+1}'].append(acc)
-          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i+1}": acc})
+          test_stats[f'knn_acc_task_{i}'].append(acc)
+          if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(**{f"knn_acc_task_{i}": acc})
           if args.debug_lpft:
-            print({f"knn_acc_task_{i+1}": acc})
-          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i+1}": acc})
+            print({f"knn_acc_task_{i}": acc})
+          if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({f"knn_acc_task_{i}": acc})
 
         if not epoch:
           all_task_results.append(results)

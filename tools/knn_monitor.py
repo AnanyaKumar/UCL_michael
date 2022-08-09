@@ -1,3 +1,5 @@
+import os
+import wandb
 from tqdm import tqdm
 import torch.nn.functional as F 
 import torch
@@ -79,55 +81,99 @@ def normalize_features(features, normalize_index):
     return normalized_features
 
 
-def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False, debug=False):
-    features_and_labels = []
-    features = []
-    targets = []
-    target_set = set()
-    for (data, target, *meta_args) in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=False):        
-        if cl_default:
-            feature = net(data.cuda(non_blocking=True), return_features=True)
-        else:
-            feature = net(data.cuda(non_blocking=True))
-        feature = feature.detach()
-        features.append(feature)
-        targets.append(target)
-        target_set |= set(target.numpy().tolist())
-        if debug and len(target_set) > 1:
-            break
+# def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False, debug=False):
+#     features_and_labels = []
+#     features = []
+#     targets = []
+#     target_set = set()
+#     for (data, target, *meta_args) in tqdm(memory_data_loader, desc='Feature extracting', leave=False, disable=False):        
+#         if cl_default:
+#             feature = net(data.cuda(non_blocking=True), return_features=True)
+#         else:
+#             feature = net(data.cuda(non_blocking=True))
+#         feature = feature.detach()
+#         features.append(feature)
+#         targets.append(target)
+#         target_set |= set(target.numpy().tolist())
+#         if debug and len(target_set) > 1:
+#             break
 
-    feature = torch.cat(features, dim=0)
-    label = torch.cat(targets, dim=0)
+#     feature = torch.cat(features, dim=0)
+#     label = torch.cat(targets, dim=0)
         
-    features_and_labels.append((feature, label))
+#     features_and_labels.append((feature, label))
 
-    features = []
-    targets = []
-    for (data, target, *meta_args) in tqdm(test_data_loader, desc='Feature extracting', leave=False, disable=False):        
-        if cl_default:
-            feature = net(data.cuda(non_blocking=True), return_features=True)
-        else:
-            feature = net(data.cuda(non_blocking=True))
-        feature = feature.detach()
-        features.append(feature)
-        targets.append(target)
-        if debug: break
+#     features = []
+#     targets = []
+#     for (data, target, *meta_args) in tqdm(test_data_loader, desc='Feature extracting', leave=False, disable=False):        
+#         if cl_default:
+#             feature = net(data.cuda(non_blocking=True), return_features=True)
+#         else:
+#             feature = net(data.cuda(non_blocking=True))
+#         feature = feature.detach()
+#         features.append(feature)
+#         targets.append(target)
+#         if debug: break
 
-    feature = torch.cat(features, dim=0)
-    label = torch.cat(targets, dim=0)
+#     feature = torch.cat(features, dim=0)
+#     label = torch.cat(targets, dim=0)
 
-    features_and_labels.append((feature, label))
+#     features_and_labels.append((feature, label))
 
-    features = [x[0].cpu().numpy() for x in features_and_labels]
-    labels = [x[1].cpu().numpy() for x in features_and_labels]
-    normalized_features = normalize_features(features, 0)
-    clf, coef, intercept, best_c, best_i, accs = test_log_reg_warm_starting(
-            normalized_features, labels, 0, [0, 1], val_index=1,
-            loader_names=["train", "test"], num_cs=10, random_state=0)
-        
+#     features = [x[0].cpu().numpy() for x in features_and_labels]
+#     labels = [x[1].cpu().numpy() for x in features_and_labels]
+#     normalized_features = normalize_features(features, 0)
+#     clf, coef, intercept, best_c, best_i, accs = test_log_reg_warm_starting(
+#             normalized_features, labels, 0, [0, 1], val_index=1,
+#             loader_names=["train", "test"], num_cs=10, random_state=0)
+
     
-    return accs[best_i]['train/acc'], accs[best_i]['test_acc/test'], accs[best_i]['C']
+#     return accs[best_i]['train/acc'], accs[best_i]['test_acc/test'], accs[best_i]['C']
 
+def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats=None, test_stats=None, end_task=True):
+  probe_train_results = []
+  probe_results = []
+  for i in range(len(dataset.test_loaders)):
+    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))
+    probe_results.append(acc)
+    probe_train_results.append(train_acc)
+
+    if test_stats: test_stats[f"probe_acc_task_{i}"].append(acc)
+    if train_stats: train_stats[f"probe_train_acc_task_{i}"].append(train_acc)
+    if test_stats: test_stats[f"probe_best_c_{i}"].append(best_c)
+    if not args.debug_lpft and "tune" in os.environ["logging"]: 
+      tune.report(**{f"probe_acc_task_{i}": acc})
+      tune.report(**{f"probe_train_acc_task_{i}": train_acc})
+      tune.report(**{f"probe_best_c_{i}": best_c})
+    if args.debug_lpft:
+      print({f"probe_acc_task_{i}": acc})
+      print({f"probe_train_acc_task_{i}": train_acc})
+      print({f"probe_best_c_{i}": best_c})
+    if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+      wandb.log({f"probe_acc_task_{i}": acc})
+      wandb.log({f"probe_train_acc_task_{i}": train_acc})
+      wandb.log({f"probe_best_c_{i}": best_c})  
+
+
+  all_probe_results.append(probe_results)
+  all_probe_train_results.append(probe_train_results)
+  if args.train.naive:
+    mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
+    mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
+  else:
+    mean_acc = np.mean(probe_results)
+    mean_train_acc = np.mean(probe_train_results)
+  if train_stats: train_stats[f"probe_train_mean_acc"].append(mean_train_acc)
+  if train_stats: train_stats[f"probe_mean_acc"].append(mean_acc)
+  if not args.debug_lpft and "tune" in os.environ["logging"]: 
+    tune.report(**{f"probe_train_mean_acc": mean_train_acc})
+    tune.report(**{f"probe_mean_acc": mean_acc})
+  if args.debug_lpft:
+    print({f"probe_mean_acc": mean_acc})
+    print({f"probe_train_mean_acc": mean_train_acc})
+  if not args.debug_lpft and "wandb" in os.environ["logging"]: 
+    wandb.log({f"probe_mean_acc": mean_acc})
+    wandb.log({f"probe_train_mean_acc": mean_train_acc})
 
 def probe_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
     probe = nn.Linear(512, dataset.N_CLASSES_PER_TASK).cuda()
@@ -218,7 +264,7 @@ def knn_predict(feature, feature_bank, feature_labels, classes, knn_k, knn_t):
     return pred_scores
 
 def get_acc(preds, labels):
-    return np.mean(preds == labels)
+    return 100*np.mean(preds == labels)
 
 def normalize_features(features, normalize_index):
     # normalize_index is the index to compute mean and std-dev
@@ -253,7 +299,6 @@ def test_log_reg_warm_starting(features, labels, train_index, test_indices, val_
             else:
                 key = 'test_acc/' + loader_names[l]
             cur_acc = get_acc(cur_preds, labels[l])
-            # Don't multiply by 100, we multiply later in summarize_linprobe_results.py
             cur_accs.append((key, cur_acc))
             if l == val_index and cur_acc > best_acc:
                 best_acc = cur_acc
@@ -268,6 +313,7 @@ def test_log_reg_warm_starting(features, labels, train_index, test_indices, val_
     if best_coef.shape[0] == 1:
         best_coef = np.concatenate((-best_coef/2, best_coef/2), axis=0)
         best_intercept = np.array([-best_intercept[0]/2, best_intercept[0]/2])
+
     return best_clf, best_coef, best_intercept, best_c, best_i, accs
 
 def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device, cl_default, task_id, k=200, t=0.1, hide_progress=False):
@@ -311,7 +357,6 @@ def logistic_monitor(net, dataset, memory_data_loader, test_data_loader, device,
             normalized_features, labels, 0, [0, 1], val_index=1,
             loader_names=["train", "test"], num_cs=40, random_state=0)
         
-    
     return accs[best_i]['train/acc'], accs[best_i]['test_acc/test'], accs[best_i]['C']
 
 

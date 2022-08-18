@@ -7,7 +7,7 @@ from tqdm import tqdm
 from arguments import get_args, init_args
 from augmentations import get_aug
 from models import get_model, get_backbone
-from tools import AverageMeter, knn_monitor, probe_evaluate, Logger
+from tools import AverageMeter, knn_monitor, probe_evaluate, Logger, logistic_monitor
 from datasets import get_dataset
 from models.optimizers import get_optimizer, LR_Scheduler
 from utils.loggers import *
@@ -45,19 +45,25 @@ def evaluate(model, model_path, args, device, dataset_copy, dataset, test_stats,
     test_stats[f'knn_mean_acc'].append(np.mean(task_knn_acc))
     print(f'Task {task_str} {args.probe_train_frac}-knn probe: {task_knn_acc}')
 
+  all_probe_acc = []
+  all_probe_train_acc = []
   if args.train.probe_monitor:
+    task_probe_acc = []
+    task_probe_train_acc = []
     for t1 in tqdm(range(0, dataset_copy.N_TASKS), desc='Inner tasks'):
-      train_loader, memory_loader, test_loader = dataset_copy.train_loaders[t1], dataset_copy.memory_loaders[t1], dataset_copy.test_loaders[t1]
-      all_probe_acc = all_probe_train_acc = []
-      probe_evaluate(args, t1, dataset_copy, model, device, memory_loader, all_probe_acc, all_probe_train_acc, end_task=False)
-      test_stats[f'probe_acc_task_{t1}'].append(all_probe_acc[-1][t1])
-      test_stats[f'probe_acc_train_task_{t1}'].append(all_probe_train_acc[-1][t1])
-    test_stats[f'probe_mean_acc'].append(np.mean(all_probe_acc[-1]))
-    test_stats[f'probe_train_mean_acc'].append(np.mean(all_probe_train_acc[-1]))
-    print(f'Task {task_str} {args.probe_train_frac}-linear probe: {all_probe_acc[-1]}')
+      train_loader, memory_loader, test_loader = dataset_copy.train_loaders[t1], dataset_copy.memory_loaders[t1], dataset_copy.test_loaders[t1]      
+      train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset_copy, memory_loader, test_loader, device, args.cl_default, task_id=t1, k=min(args.train.knn_k, len(memory_loader.dataset)))
+      task_probe_acc.append(acc)
+      task_probe_train_acc.append(train_acc)
+      test_stats[f'probe_acc_task_{t1}'].append(acc)
+      test_stats[f'probe_acc_train_task_{t1}'].append(train_acc)
+    test_stats[f'probe_mean_acc'].append(np.mean(task_probe_acc))
+    test_stats[f'probe_train_mean_acc'].append(np.mean(task_probe_train_acc))
+    print(f'Task {task_str} {args.probe_train_frac}-linear probe: {task_probe_acc}')
 
 
 def main(device, args):
+    os.environ['logging'] = ""
     config = {"default_args": vars(args), "train": vars(args.train)}
     args = config["default_args"]
     device = args["device"]    
@@ -68,12 +74,6 @@ def main(device, args):
     train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args)
     model = get_model(args, device, len(train_loader), dataset_copy, dataset_copy.get_transform(args))
     logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
-    
-    if args.train.disable_logging:
-      os.environ['logging'] = ""
-    else:
-      # os.environ['logging'] = "wandb,tune"
-      os.environ['logging'] = "wandb"
 
     for t in range(dataset_copy.N_TASKS - 1):
         _, _, _ = dataset_copy.get_data_loaders(args)
@@ -95,6 +95,7 @@ def main(device, args):
         # to debug on same machine as training
         model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}.pth")
       else:
+        breakpoint()
         raise AssertionError("checkpoint path doesn't exist")
 
       evaluate(model, model_path, args, device, dataset_copy, dataset, test_stats, task_str)          
@@ -115,5 +116,4 @@ def main(device, args):
 
 if __name__ == "__main__":
     args, checkpoints_dir = get_args()
-    breakpoint()
     main(device=args.device, args=args)

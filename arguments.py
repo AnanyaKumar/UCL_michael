@@ -102,7 +102,7 @@ def populate_defaults(config):
     config = fill_default_value(config, 'last', False)
     config = fill_default_value(config, 'debug_lpft', False)
     config = fill_default_value(config, 'lpft', False)
-    config = fill_default_value(config, 'rerun', True)
+    config = fill_default_value(config, 'rerun', False)
     config = fill_default_value(config, 'is_eval_script', False)
     config = fill_default_value(config, 'probe_train_frac', 1.0)
     config = fill_default_value(config, 'save_model', False)
@@ -172,19 +172,21 @@ def get_args():
 
     assert not None in [args.log_dir] # used to include args.data_dir too, but assume each dataset finds data location manually
 
+    is_eval_mode = args.is_eval_script or args.lpft_monitor
+
     # args.log_dir = os.path.join(args.log_dir, 'in-progress_'+datetime.now().strftime('%m%d%H%M%S_')+args.name)
     args.log_dir = os.path.join(args.log_dir, args.group_name, args.run_name)
-    if os.path.isdir(args.log_dir) and args.rerun and not args.is_eval_script:
+    if os.path.isdir(args.log_dir) and args.rerun and not is_eval_mode:
         print("Removed old run directory at {}.".format(args.log_dir))
         shutil.rmtree(args.log_dir)
 
     if not args.is_eval_script:
-        os.makedirs(args.log_dir, exist_ok=False)
+        os.makedirs(args.log_dir, exist_ok=args.rerun)
         print(f'creating file {args.log_dir}')
         
     args.ckpt_dir = os.path.join(args.log_dir, 'checkpoints')
 
-    if os.path.isdir(args.ckpt_dir) and args.rerun and not args.is_eval_script:
+    if os.path.isdir(args.ckpt_dir) and args.rerun and not is_eval_mode:
         shutil.rmtree(args.ckpt_dir)
 
     if not args.is_eval_script:
@@ -200,7 +202,7 @@ def get_args():
         else:
             checkpoints_dir = log_dir + '/checkpoints'
 
-    if not args.is_eval_script:
+    if not is_eval_mode:
         config_json = args.log_dir + '/config.json'
         args_dict = namespace_to_dict(copy.deepcopy(args))
         print(args_dict)

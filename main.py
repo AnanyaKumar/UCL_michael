@@ -191,81 +191,20 @@ def unfreeze_weights(model, args):
     model.net.projector.requires_grad_(True)
     model.net.predictor.requires_grad_(True)
 
-
-def trainable(config):
-  # WANDB    
+def train_model(dataset, args, loaded_model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs):  
+  if args.lpft_monitor:
+    args.train = update_args(args.train, 'sklearn_lp_probe', args.lpft_monitor_sklearn_lp_probe)
+    args.train = update_args(args.train, 'num_lp_epochs', args.lpft_monitor_num_lp_epochs)
+    args.train = update_args(args.train, 'ft_lr', args.lpft_monitor_ft_lr)
+    args.train = update_args(args.train, 'num_epochs', args.lpft_monitor_num_epochs)
+    args.train = update_args(args.train, 'stop_at_epoch', args.lpft_monitor_num_epochs)
   
-  args = config["default_args"]
-  device = args["device"]
-  
-  # Do some train.argument specific assertions here
-  args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
-  assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
-    
-  args = init_args(args)
-
-  args.aug_kwargs = vars(args.aug_kwargs)
-
-  if args.train.disable_logging:
-    os.environ['logging'] = ""
-  elif args.is_eval_script:
-      raise NotImplementedError
-  else:
-    # os.environ['logging'] = "wandb,tune"
-    os.environ['logging'] = "wandb"
-    
-  if not args.debug_lpft and "wandb" in os.environ["logging"]:
-    api = wandb.Api()
-    runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
-    if len(runs):
-      for i in range(len(runs)):
-        if runs[i].state == "finished":
-          if not args.rerun:
-            print("Exiting, existing run already finished")
-        elif runs[i].state == "crashed":
-          continue
-        else:
-          continue
-
-      print("Redoing run, previously no runs finished")
-
-    user = os.environ["USER"]
-    wandb.init(project=args.project_name, name=args.run_name, 
-                dir=f"/nlp/scr/{user}/wandb/",
-                group=args.group_name, config=Namespace.namespace_to_dict(deepcopy(args)))
-
-  # makes fraction of lp epochs compatible with lr scheduler
-  # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
-  dataset = get_dataset(args)
-  dataset_copy = get_dataset(args)
-  train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
-
-  # define model
-  model = get_model(args, device, len(train_loader), dataset, dataset.get_transform(args))
-
-  backbone_n_params = get_num_params(model.net.backbone)
-  if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(backbone_n_params=backbone_n_params)
-  if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'backbone_n_params': backbone_n_params})
-
-  logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
-  accuracy = 0 
-  
-
-  if args.last:
-    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{3}_orig.pth")
-    save_dict = torch.load(model_path, map_location='cpu')
-    msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True) 
-    model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
-  
-  all_task_results = []
-  old_fcs = []
-  all_probe_results = []
-  all_probe_train_results = []
-
-  train_metrics = []
-  test_metrics = []
-
   for t in range(dataset.N_TASKS):
+    if args.lpft_monitor:
+      model = deepcopy(loaded_model)
+    else:
+      model = loaded_model
+
     best_current_task = float("-inf")
     best_mean_task = float("-inf")
     train_loader, memory_loader, test_loader = dataset.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs == 0)
@@ -428,13 +367,92 @@ def trainable(config):
 
 
 
+def trainable(config):
+  # WANDB    
+  
+  args = config["default_args"]
+  device = args["device"]
+  
+  # Do some train.argument specific assertions here
+  args['train'] = update_args(args['train'], 'stop_at_epoch', args['train'].num_epochs)
+  assert not args['train'].all_tasks_num_epochs or not args['train'].probe_monitor  
+    
+  args = init_args(args)
 
+  args.aug_kwargs = vars(args.aug_kwargs)
+
+  if args.train.disable_logging:
+    os.environ['logging'] = ""
+  elif args.is_eval_script:
+      raise NotImplementedError
+  else:
+    # os.environ['logging'] = "wandb,tune"
+    os.environ['logging'] = "wandb"
+    
+  if not args.debug_lpft and "wandb" in os.environ["logging"]:
+    api = wandb.Api()
+    runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
+    if len(runs):
+      for i in range(len(runs)):
+        if runs[i].state == "finished":
+          if not args.rerun:
+            print("Exiting, existing run already finished")
+        elif runs[i].state == "crashed":
+          continue
+        else:
+          continue
+
+      print("Redoing run, previously no runs finished")
+
+    user = os.environ["USER"]
+    wandb.init(project=args.project_name, name=args.run_name, 
+                dir=f"/nlp/scr/{user}/wandb/",
+                group=args.group_name, config=Namespace.namespace_to_dict(deepcopy(args)))
+
+  # makes fraction of lp epochs compatible with lr scheduler
+  # args.train.warmup_epochs = int(args.train.warmup_lp_epoch_f * args.train.num_epochs)
+  dataset = get_dataset(args)
+  dataset_copy = get_dataset(args)
+  train_loader, memory_loader, test_loader = dataset_copy.get_data_loaders(args, divide_tasks=args.train.all_tasks_num_epochs > 0)
+
+  # define model
+  model = get_model(args, device, len(train_loader), dataset, dataset.get_transform(args))
+
+  backbone_n_params = get_num_params(model.net.backbone)
+  if not args.debug_lpft and "tune" in os.environ["logging"]: tune.report(backbone_n_params=backbone_n_params)
+  if not args.debug_lpft and "wandb" in os.environ["logging"]: wandb.log({'backbone_n_params': backbone_n_params})
+
+  logger = Logger(matplotlib=args.logger.matplotlib, log_dir=args.log_dir)
+  accuracy = 0 
+  
+
+  if args.last:
+    model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{3}_orig.pth")
+    save_dict = torch.load(model_path, map_location='cpu')
+    msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k and 'fc' not in k}, strict=True) 
+    model.net.opt.load_state_dict(save_dict['opt_state_dict'])   
+  
+  all_task_results = []
+  old_fcs = []
+  all_probe_results = []
+  all_probe_train_results = []
+
+  train_metrics = []
+  test_metrics = []
+
+  if args.lpft_monitor:
+    ckpt_dir = args.ckpt_dir.replace("lpft_monitor", "lpft")
+    task_str = '0:5'
+    model_path = os.path.join(ckpt_dir, f"{args.model.cl_model}_{task_str}.pth")
+    save_dict = torch.load(model_path, map_location='cpu')
+    msg = model.net.backbone.load_state_dict({k.split('backbone.')[1]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=True)
+    train_model(dataset, args, model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs)
+  else:
+    train_model(dataset, args, model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs)
 
   if "tune" in os.environ["logging"]:
     tune.report(done=1)
 
-  if args.eval is not False and args.cl_default is False:
-      args.eval_from = model_path
 
   if "wandb" in os.environ["logging"]:
     wandb.alert(

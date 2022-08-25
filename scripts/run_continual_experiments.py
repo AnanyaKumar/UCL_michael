@@ -314,7 +314,27 @@ def lpft_experiments(args, unparsed):
     
     all_ids = replicated_sweep(
         adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
-        num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun', 'probe_train_frac'})
+        num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun'})
+    
+    print(all_ids)
+
+
+def lpft_monitor_experiments(args, unparsed):
+    adapt_name = 'lpft_monitor'
+    dataset = get_dataset(args.dataset)
+    hyperparameters_list = transform_unparsed(unparsed)
+
+    if args.only_one_run:
+        hyperparameters_list = [hyperparameters_list[0]]       
+
+    assert 'probe_train_frac' in hyperparameters_list[0]
+    
+    num_replications = args.num_replications
+    
+    all_ids = replicated_sweep(
+        adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
+        num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun', 
+        'lpft_monitor', 'lpft_monitor_sklearn_lp_probe', 'lpft_monitor_num_lp_epochs', 'lpft_monitor_ft_lr', 'lpft_monitor_num_epochs'})
     
     print(all_ids)
 
@@ -322,6 +342,7 @@ def lpft_experiments(args, unparsed):
 def main(args, unparsed):
     experiment_to_fns = {
         'lpft': lpft_experiments,
+        'lpft_monitor': lpft_monitor_experiments
     }
     if args.experiment in experiment_to_fns:
         experiment_to_fns[args.experiment](args, unparsed)

@@ -220,6 +220,9 @@ def train_model(dataset, args, loaded_model, device, logger, all_task_results, a
 
     print(f"at start of task {t}, cuda allocated", print("knn cuda allocated", torch.cuda.memory_allocated()))    
 
+    if hasattr(model, 'begin_task'):
+      model.begin_task(t, dataset)
+
     epoch = 0
     for epoch in global_progress: 
 

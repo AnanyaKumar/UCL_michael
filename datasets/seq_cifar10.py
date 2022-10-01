@@ -18,6 +18,31 @@ import torch
 from augmentations import get_aug
 from PIL import Image
 
+class MyCIFAR10(CIFAR10):
+    """
+    Overrides the CIFAR10 dataset to change the getitem function.
+    """
+    def __init__(self, root, train=True, transform=None,
+                 target_transform=None, download=False) -> None:
+        super(MyCIFAR10, self).__init__(root, train, transform, target_transform, download)
+
+    def __getitem__(self, index: int) -> Tuple[type(Image), int, type(Image)]:
+        """
+        Gets the requested element from the dataset.
+        :param index: index of the element to be returned
+        :returns: tuple: (image, target) where target is index of the target class.
+        """
+        img, target = self.data[index], self.targets[index]
+        img = Image.fromarray(img, mode='RGB')
+        original_img = img.copy()
+
+
+        img, img1, not_aug_img = self.transform(original_img)
+
+        if hasattr(self, 'logits'):
+            return (img, img1, not_aug_img), target, self.logits[index]
+
+        return (img, img1, not_aug_img),  target
 
 class SequentialCIFAR10(ContinualDataset):
 
@@ -42,7 +67,7 @@ class SequentialCIFAR10(ContinualDataset):
                base_path() + 'CIFAR10', train=True, probe_train_frac=args.probe_train_frac,
                download=True, transform=test_transform)
         else:
-            train_dataset = CIFAR10(
+            train_dataset = MyCIFAR10(
                 base_path() + 'CIFAR10', train=True,
                 download=True, transform=transform)
             memory_dataset = CIFAR10(

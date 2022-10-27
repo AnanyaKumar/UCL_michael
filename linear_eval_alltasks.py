@@ -32,11 +32,11 @@ def main(device, args):
         _, _, _ = dataset_copy.get_data_loaders(args)
 
     knn_acc = []
-    for t in tqdm(range(0, dataset_copy.N_TASKS), desc='Evaluatinng'):
+    for t in tqdm(range(0, dataset_copy.N_TASKS), desc='Evaluating'):
       dataset = get_dataset(args)
       model_path = os.path.join(args.ckpt_dir, f"{args.model.cl_model}_{args.name}_{t}.pth")
       save_dict = torch.load(model_path, map_location='cpu')
-
+      breakpoint()
       msg = model.net.module.backbone.load_state_dict({k[16:]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=True)
       model = model.to(args.device)
     
@@ -48,6 +48,7 @@ def main(device, args):
       knn_acc.append(task_knn_acc)
       print(f'Task {t}: {task_knn_acc}')
     
+    breakpoint()
     mean_knn_acc = sum(knn_acc[-1][:len(knn_acc[-1])]) / len(knn_acc[-1])
     print(f'KNN accuracy on Task {t1}: {mean_knn_acc}')
 
@@ -57,5 +58,5 @@ def main(device, args):
 
 
 if __name__ == "__main__":
-    args = get_args()
+    args, checkpoints_dir = get_args()
     main(device=args.device, args=args)

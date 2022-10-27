@@ -29,6 +29,7 @@ class SI(ContinualModel):
         if self.big_omega is None:
             self.big_omega = torch.zeros_like(self.net.backbone.get_params()).to(self.device)
 
+        # rerun all SI experiments with += 
         self.big_omega = self.small_omega / ((self.net.backbone.get_params().data - self.checkpoint) ** 2 + self.xi)
 
         self.checkpoint = self.net.backbone.get_params().data.clone().to(self.device)
@@ -36,7 +37,7 @@ class SI(ContinualModel):
 
     def observe(self, inputs1, labels, inputs2, notaug_inputs):
         self.opt.zero_grad()
-        if self.args.cl_default:
+        if self.args.cl_default or self.args.lpft_monitor:
             labels = labels.to(self.device)
             outputs = self.net.backbone(inputs1.to(self.device))
             penalty = self.c * self.penalty()

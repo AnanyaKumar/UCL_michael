@@ -83,7 +83,7 @@ def make_checkpoints_dir(log_dir):
     checkpoints_dir = Path(checkpoints_dir).resolve().expanduser()
     if os.path.exists(checkpoints_dir):
         shutil.rmtree(checkpoints_dir)
-    os.makedirs(checkpoints_dir)
+    os.makedirs(checkpoints_dir, exist_ok=True)
     return checkpoints_dir
 
 def populate_defaults(config):
@@ -93,6 +93,7 @@ def populate_defaults(config):
     config = fill_default_value(config, 'download', False)
     config = fill_default_value(config, 'data_dir', os.getenv('DATA'))
     config = fill_default_value(config, 'log_dir', os.getenv('LOG'))
+    config = fill_default_value(config, 'save_log_dir', os.getenv('LOG'))
     # config = # fill_default_value(config, 'ckpt_dir', os.getenv('CHECKPOINT'))
     # config = # fill_default_value(config, 'ckpt_dir_1', os.getenv('CHECKPOINT'))
     config = fill_default_value(config, 'device', 'cuda'  if torch.cuda.is_available() else 'cpu')
@@ -102,7 +103,8 @@ def populate_defaults(config):
     config = fill_default_value(config, 'last', False)
     config = fill_default_value(config, 'debug_lpft', False)
     config = fill_default_value(config, 'lpft', False)
-    config = fill_default_value(config, 'rerun', False)
+    config = fill_default_value(config, 'lpft_monitor', False)
+    config = fill_default_value(config, 'rerun', True)
     config = fill_default_value(config, 'is_eval_script', False)
     config = fill_default_value(config, 'probe_train_frac', 1.0)
     config = fill_default_value(config, 'save_model', False)
@@ -176,18 +178,27 @@ def get_args():
 
     # args.log_dir = os.path.join(args.log_dir, 'in-progress_'+datetime.now().strftime('%m%d%H%M%S_')+args.name)
     args.log_dir = os.path.join(args.log_dir, args.group_name, args.run_name)
+    args.save_log_dir = os.path.join(args.save_log_dir, args.group_name, args.run_name)
     if os.path.isdir(args.log_dir) and args.rerun and not is_eval_mode:
         print("Removed old run directory at {}.".format(args.log_dir))
         shutil.rmtree(args.log_dir)
+    if os.path.isdir(args.save_log_dir) and args.rerun and not is_eval_mode:
+        print("Removed old run directory at {}.".format(args.save_log_dir))
+        shutil.rmtree(args.save_log_dir)
 
     if not args.is_eval_script:
         os.makedirs(args.log_dir, exist_ok=args.rerun)
+        os.makedirs(args.save_log_dir, exist_ok=args.rerun)
         print(f'creating file {args.log_dir}')
+        print(f'creating file {args.save_log_dir}')
         
     args.ckpt_dir = os.path.join(args.log_dir, 'checkpoints')
+    args.save_log_dir = os.path.join(args.save_log_dir, 'checkpoints')
 
     if os.path.isdir(args.ckpt_dir) and args.rerun and not is_eval_mode:
         shutil.rmtree(args.ckpt_dir)
+    if os.path.isdir(args.save_log_dir) and args.rerun and not is_eval_mode:
+        shutil.rmtree(args.save_log_dir)
 
     if not args.is_eval_script:
         if args.tmp_par_ckp_dir is not None:

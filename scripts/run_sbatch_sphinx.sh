@@ -2,10 +2,9 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --partition=jag-standard
-#SBATCH --mem=32G
-#SBATCH --exclude=jagupard[13,14,15,18,28,29,30,31]
-# #SBATCH --exclude=jagupard[14,17,18,20]
+#SBATCH --mem=24G
+#SBATCH --partition=sphinx
+#SBATCH -t 2-0:00
 
 # Print execute commands in the log.
 set -x

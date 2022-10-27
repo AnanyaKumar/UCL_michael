@@ -55,7 +55,7 @@ def get_backbone(backbone, dataset, castrate=True, args=None):
         setattr(backbone, head_attr_name, nn.Linear(in_features, dataset.HEAD_DIM))
     
     backbone.output_dim = (get_head(backbone)).in_features
-    if not castrate:
+    if not castrate and not args.lpft_monitor:
         if hasattr(backbone, "fc"): backbone.fc = torch.nn.Identity()
         else: backbone.classifier = torch.nn.Identity()
 

@@ -7,9 +7,9 @@ import torch.nn as nn
 import numpy as np
 import copy
 import time
-from models import set_linear_layer
+from models import set_linear_layer, get_features
 from utils.metrics import mask_classes
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 
 # code copied from https://colab.research.google.com/github/facebookresearch/moco/blob/colab-notebook/colab/moco_cifar10_demo.ipynb#scrollTo=RI1Y8bSImD7N
@@ -134,7 +134,40 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
   probe_train_results = []
   probe_results = []
   for i in range(len(dataset.test_loaders)):
-    train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))
+    if args.lpft_monitor:
+        correct, correct_mask_classes, total = 0.0, 0.0, 0.0
+        for (inputs, labels, *meta_args) in tqdm(dataset.memory_loaders[i]):
+            inputs, labels = inputs.to(device), labels.to(device)            
+            outputs = model.net.backbone(inputs, return_features=True)
+            outputs = model.net.backbone.fc(outputs)
+            _, pred = torch.max(outputs.data, 1)
+            correct += torch.sum(pred == labels).item()
+            total += labels.shape[0]
+            if dataset.SETTING == 'class-il' or dataset.SETTING == 'domain-il':              
+                mask_classes(outputs, dataset, i if dataset.SETTING == 'class-il' else 0)
+                _, pred = torch.max(outputs.data, 1)
+                correct_mask_classes += torch.sum(pred == labels).item()
+        
+        train_acc = correct_mask_classes / total * 100
+
+        correct, correct_mask_classes, total = 0.0, 0.0, 0.0
+        for (inputs, labels, *meta_args) in tqdm(dataset.test_loaders[i]):
+            inputs, labels = inputs.to(device), labels.to(device)            
+            outputs = model.net.backbone(inputs, return_features=True)
+            outputs = model.net.backbone.fc(outputs)
+            _, pred = torch.max(outputs.data, 1)
+            correct += torch.sum(pred == labels).item()
+            total += labels.shape[0]
+            if dataset.SETTING == 'class-il' or dataset.SETTING == 'domain-il':              
+                mask_classes(outputs, dataset, i if dataset.SETTING == 'class-il' else 0)
+                _, pred = torch.max(outputs.data, 1)
+                correct_mask_classes += torch.sum(pred == labels).item()
+        
+        acc = correct_mask_classes / total * 100
+        best_c = -1
+    else:
+        train_acc, acc, best_c = logistic_monitor(model.net.backbone, dataset, dataset.memory_loaders[i], dataset.test_loaders[i], device, args.cl_default, task_id=t, k=min(args.train.knn_k, len(memory_loader.dataset)))
+
     probe_results.append(acc)
     probe_train_results.append(train_acc)
 
@@ -157,9 +190,16 @@ def probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_res
 
   all_probe_results.append(probe_results)
   all_probe_train_results.append(probe_train_results)
-  if args.train.naive:
-    mean_acc = np.mean([all_probe_results[i][i] for i in range(len(dataset.test_loaders))])
-    mean_train_acc = np.mean([all_probe_train_results[i][i] for i in range(len(dataset.test_loaders))])
+  if args.train.naive or args.lpft_monitor:
+    dic = defaultdict(list)
+    train_dic = defaultdict(list)
+    for result_row, train_result_row in zip(all_probe_results, all_probe_train_results):
+        dic[len(result_row)].append(result_row)
+        train_dic[len(train_result_row)].append(train_result_row)
+
+    mean_acc = np.mean([max(np.array(dic[i+1])[:, -1]) for i in range(len(dataset.test_loaders))])
+    mean_train_acc = np.mean([max(np.array(train_dic[i+1])[:, -1]) for i in range(len(dataset.test_loaders))])
+
   else:
     mean_acc = np.mean(probe_results)
     mean_train_acc = np.mean(probe_train_results)

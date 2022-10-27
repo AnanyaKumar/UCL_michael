@@ -19,6 +19,3 @@ def get_aug(name='simsiam', image_size=224, train=True, train_classifier=None, *
 
 
 
-
-
-

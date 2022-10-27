@@ -90,7 +90,7 @@ def save_model(model, args, t, epoch, dataset):
   elif args.last:
     model_path = os.path.join(args.tmp_par_ckp_dir, f"checkpoints/{args.model.cl_model}_{task_str}_last.pth")  
     
-  if args.save_model:
+  if args.save_model and not args.lpft_monitor: # lpft monitor, save space
     torch.save({
       'epoch': epoch+1,
       'state_dict':model.net.state_dict(),
@@ -193,11 +193,12 @@ def unfreeze_weights(model, args):
 
 def train_model(dataset, args, loaded_model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs):  
   if args.lpft_monitor:
-    args.train = update_args(args.train, 'sklearn_lp_probe', args.lpft_monitor_sklearn_lp_probe)
-    args.train = update_args(args.train, 'num_lp_epochs', args.lpft_monitor_num_lp_epochs)
-    args.train = update_args(args.train, 'ft_lr', args.lpft_monitor_ft_lr)
-    args.train = update_args(args.train, 'num_epochs', args.lpft_monitor_num_epochs)
-    args.train = update_args(args.train, 'stop_at_epoch', args.lpft_monitor_num_epochs)
+    args.train = update_args(args.train, 'sklearn_lp_probe', args.lpft_sklearn_lp_probe)
+    args.train = update_args(args.train, 'num_lp_epochs', args.lpft_num_lp_epochs)
+    args.train = update_args(args.train, 'ft_lr', args.lpft_ft_lr)
+    args.train = update_args(args.train, 'num_epochs', args.lpft_num_epochs)
+    args.train = update_args(args.train, 'stop_at_epoch', args.lpft_num_epochs)
+    args.train = update_args(args.train, 'probe_interval', args.lpft_probe_interval)
   
   for t in range(dataset.N_TASKS):
     if args.lpft_monitor:
@@ -285,9 +286,14 @@ def train_model(dataset, args, loaded_model, device, logger, all_task_results, a
 
         if not epoch:
           all_task_results.append(results)
+        elif args.lpft_monitor:
+          prev_task_best = all_task_results[-1][t]
+          all_task_results[-1] = results          
+          all_task_results[-1][t] = max(prev_task_best, results[t])
         else:
           all_task_results[-1] = results
-        if args.train.naive:
+          
+        if args.train.naive or args.lpft_monitor:
           mean_acc = np.mean([all_task_results[i][i] for i in range(len(dataset.test_loaders))])
         else:
           mean_acc = np.mean(results)
@@ -315,7 +321,7 @@ def train_model(dataset, args, loaded_model, device, logger, all_task_results, a
           save_model(model, args, list(range(t+1)), epoch, dataset)
 
       if args.train.probe_monitor and epoch % args.train.probe_interval == 0:
-        probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=False)
+          probe_evaluate(args, t, dataset, model, device, memory_loader, all_probe_results, all_probe_train_results, train_stats, test_stats, end_task=False)
 
       ## BELOW for class-il and task-il evaluation, specific to supervised continual setting
 
@@ -356,7 +362,10 @@ def train_model(dataset, args, loaded_model, device, logger, all_task_results, a
       logger.process_stats(train_stats, test_stats)
       train_metrics.append(train_stats)
       test_metrics.append(test_stats)
-      logger.write_tsv(train_metrics, test_metrics)
+      filename = "stats.tsv"
+      if args.lpft_monitor and 'probe_train_frac' in args.__dict__:
+        filename = f"stats_probe_train_frac-{args.probe_train_frac}-ft_lr-{args.lpft_ft_lr}.tsv"
+      logger.write_tsv(train_metrics, test_metrics, file=filename)
 
 
     if not args.train.save_best:
@@ -389,21 +398,7 @@ def trainable(config):
     # os.environ['logging'] = "wandb,tune"
     os.environ['logging'] = "wandb"
     
-  if not args.debug_lpft and "wandb" in os.environ["logging"]:
-    api = wandb.Api()
-    runs = api.runs(path=f"lpft/{args.project_name}", filters={"config.group_name": args.group_name, "config.run_name": args.run_name})
-    if len(runs):
-      for i in range(len(runs)):
-        if runs[i].state == "finished":
-          if not args.rerun:
-            print("Exiting, existing run already finished")
-        elif runs[i].state == "crashed":
-          continue
-        else:
-          continue
-
-      print("Redoing run, previously no runs finished")
-
+  if not args.debug_lpft and "wandb" in os.environ["logging"]:    
     user = os.environ["USER"]
     wandb.init(project=args.project_name, name=args.run_name, 
                 dir=f"/nlp/scr/{user}/wandb/",
@@ -441,11 +436,11 @@ def trainable(config):
   test_metrics = []
 
   if args.lpft_monitor:
-    ckpt_dir = args.ckpt_dir.replace("lpft_monitor", "lpft")
-    task_str = '0:5'
+    ckpt_dir = (args.save_log_dir if args.save_log_dir else args.ckpt_dir).replace("lpft_eval", "lpft")
+    task_str = f'0:{dataset.N_TASKS}'
     model_path = os.path.join(ckpt_dir, f"{args.model.cl_model}_{task_str}.pth")
     save_dict = torch.load(model_path, map_location='cpu')
-    msg = model.net.backbone.load_state_dict({k.split('backbone.')[1]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=True)
+    msg = model.net.backbone.load_state_dict({k.split('backbone.')[1]:v for k, v in save_dict['state_dict'].items() if 'backbone.' in k}, strict=args.cl_default)
     train_model(dataset, args, model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs)
   else:
     train_model(dataset, args, model, device, logger, all_task_results, all_probe_results, all_probe_train_results, train_metrics, test_metrics, old_fcs)
@@ -641,7 +636,7 @@ if __name__ == "__main__":
     os.rename(args.log_dir, completed_log_dir)
     if args.tmp_par_ckp_dir is not None:
       if args.save_model:
-        new_checkpoints_dir = args.ckpt_dir
+        new_checkpoints_dir = args.save_log_dir if args.save_log_dir else args.ckpt_dir
         shutil.copytree(checkpoints_dir, new_checkpoints_dir)
         print(f'Model has been moved to {new_checkpoints_dir}')
     print(f'Log file has been saved to {completed_log_dir}')

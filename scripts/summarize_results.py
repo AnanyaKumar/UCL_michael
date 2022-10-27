@@ -27,6 +27,7 @@ def get_result(file_path, val_metric, output_metrics, take_max=True, take_last="
             raise ValueError(f'{val_metric} column not in {file_path}')
         min_task_id = min(df['task'])
         max_task_id = max(df['task'])
+        assert max_task_id == 9
         min_task_entries = len(df[df['task'] == min_task_id])
         max_task_entries = len(df[df['task'] == max_task_id])
         assert min_task_entries == max_task_entries, "unequal entries between tasks"

@@ -7,6 +7,8 @@ from copy import deepcopy
 import re
 import shlex
 import subprocess
+import wandb
+import os
 
 PROJECT_NAME = "continual_learning"
 
@@ -79,10 +81,18 @@ cifar100 = Dataset(
     slurm_data_cmd=None
 )
 
+tiny = Dataset(
+    name='tiny',
+    val_metric='knn_mean_acc',
+    output_metrics=build_metrics(10),
+    config_rel_path='simsiam_tinyimagenet.yaml',
+    slurm_data_cmd=None
+)
+
 tiny_scl = Dataset(
     name='tiny_scl',
     val_metric='knn_mean_acc',
-    output_metrics=build_metrics(20),
+    output_metrics=build_metrics(10),
     config_rel_path='finetune_tiny_scl.yaml',
     slurm_data_cmd=None
 )
@@ -95,13 +105,23 @@ fmow = Dataset(
     slurm_data_cmd='scripts/copy_dataset.sh'
 )
 
+asc_scl = Dataset(
+    name='asc',
+    val_metric='',
+    output_metrics=[''],
+    config_rel_path='',
+    slurm_data_cmd=None
+)
+
 names_to_datasets = {
     'cifar10_scl': cifar10_scl, 
     'cifar10': cifar10,
     'cifar100_scl': cifar100_scl, 
     'cifar100': cifar100,
     'tiny_scl': tiny_scl,
-    "fmow": fmow
+    'tiny': tiny,
+    "fmow": fmow,
+    "asc_scl": asc_scl
 }
 
 def get_dataset(name):
@@ -124,7 +144,10 @@ def process(d):
 def transform_unparsed(unparsed):
     unparsed_dic = {}
     for unparsed_option in unparsed:
-        option_name, val = unparsed_option.split('=')
+        try:
+            option_name, val = unparsed_option.split('=')
+        except:
+            breakpoint()
         # get rid of --
         option_name = option_name[2:].strip()
         # handle nesting
@@ -221,6 +244,7 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     kwargs['config'] = config_path
    
     kwargs['log_dir'] = args.log_dir
+    kwargs['save_log_dir'] = args.save_log_dir
     kwargs['tmp_par_ckp_dir'] = args.tmp_dir + '/' + group_name + '_' + run_name
 
     kwargs['project_name'] = project_name
@@ -228,7 +252,7 @@ def get_baseline_experiment_cmd(config_path, run_name, group_name, project_name,
     kwargs['group_name'] = group_name
     kwargs['run_name'] = run_name
     
-    code_path = args.code_dir + '/' + ('probe_eval_alltasks.py' if args.is_eval_script else 'main.py')
+    code_path = args.code_dir + '/' + ('probe_eval_alltasks.py' if args.is_eval_script else args.code_file)
     return (get_python_cmd(code_path=code_path, python_path=args.python_path, kwargs=kwargs,
                            args=args),
             kwargs['log_dir'])
@@ -275,6 +299,23 @@ def run_adapt_sweep(adapt_name, dataset, hyperparams, args, run_name_suffix='',
     if dataset.slurm_data_cmd is not None:
         dataset_copy_cmd = dataset.slurm_data_cmd.format(scripts_dir=args.scripts_dir)
 
+    rerun = args.do_rerun
+    api = wandb.Api()
+    runs = api.runs(path=f"lpft/{project_name}", filters={"config.group_name": group_name, "config.run_name": run_name})
+    log_dirname = os.path.join(args.log_dir, group_name, run_name)
+    exists_file = os.path.exists(os.path.join(log_dirname, "stats.tsv"))
+    if not rerun and len(runs):
+      for i in range(len(runs)):
+        if runs[i].state == "finished" and exists_file:
+            print("Exiting, existing run already finished")
+            return
+        elif runs[i].state == "crashed":
+          continue
+        else:
+          continue
+
+      print("Redoing run, previously no runs finished")
+    
     return config_run(args, kwargs=kwargs, config_path=config_path,
         run_name=run_name, group_name=group_name, project_name=project_name,
         dataset_copy_cmd=dataset_copy_cmd)
@@ -319,8 +360,30 @@ def lpft_experiments(args, unparsed):
     print(all_ids)
 
 
+def lpft_nlp_experiments(args, unparsed):
+    adapt_name = 'lpft_nlp'
+    dataset = get_dataset(args.dataset)
+    hyperparameters_list = transform_unparsed(unparsed)
+
+    if args.only_one_run:
+        hyperparameters_list = [hyperparameters_list[0]]       
+
+    if args.is_eval_script:
+        # some extra assertions
+        assert 'probe_train_frac' in hyperparameters_list[0]
+        assert not hyperparameters_list[0]['rerun']
+    
+    num_replications = args.num_replications
+    
+    all_ids = replicated_sweep(
+        adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
+        num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun','scenario','bert_model','backbone','use_predefine_args','baseline'})
+    
+    print(all_ids)
+
+
 def lpft_monitor_experiments(args, unparsed):
-    adapt_name = 'lpft_monitor'
+    adapt_name = 'lpft_eval'
     dataset = get_dataset(args.dataset)
     hyperparameters_list = transform_unparsed(unparsed)
 
@@ -334,7 +397,7 @@ def lpft_monitor_experiments(args, unparsed):
     all_ids = replicated_sweep(
         adapt_name=adapt_name, dataset=dataset, hyperparams_list=hyperparameters_list,
         num_replications=num_replications, args=args, ignore_name_hypers={'probe_train_frac', 'rerun', 
-        'lpft_monitor', 'lpft_monitor_sklearn_lp_probe', 'lpft_monitor_num_lp_epochs', 'lpft_monitor_ft_lr', 'lpft_monitor_num_epochs'})
+        'lpft_monitor', 'lpft_sklearn_lp_probe', 'lpft_num_lp_epochs', 'lpft_ft_lr', 'lpft_num_epochs', 'lpft_probe_interval'})
     
     print(all_ids)
 
@@ -342,7 +405,8 @@ def lpft_monitor_experiments(args, unparsed):
 def main(args, unparsed):
     experiment_to_fns = {
         'lpft': lpft_experiments,
-        'lpft_monitor': lpft_monitor_experiments
+        'lpft_eval': lpft_monitor_experiments,
+        'lpft_nlp': lpft_nlp_experiments,
     }
     if args.experiment in experiment_to_fns:
         experiment_to_fns[args.experiment](args, unparsed)
@@ -371,10 +435,14 @@ if __name__ == "__main__":
                         help='(Slurm only) Path to dir to store stdout for experiment.')
     parser.add_argument('--log_dir', type=str, required=False, default='logs/',
                         help='Path to dir where we save logs and run checkpoints.')
+    parser.add_argument('--save_log_dir', type=str, required=False, default='logs/',
+                        help='Path to dir where we save logs and run checkpoints.')
     parser.add_argument('--config_dir', type=str, required=False, default='configs/',
                         help='Directory where config files are stored.')
     parser.add_argument('--code_dir', type=str, required=False, default='.',
                         help='Path to directory where main.py file is located.')
+    parser.add_argument('--code_file', type=str, required=False, default='main.py',
+                        help='Name of main file')
     parser.add_argument('--tmp_dir', type=str, required=False, default='/scr/biggest/ue_michael/',
                         help='(Slurm only) Directory where tmp files are stored.')
     parser.add_argument('--python_path', type=str, required=False, default='python',
@@ -388,5 +456,7 @@ if __name__ == "__main__":
                         help='Only print sbatch command to debug', required=False)
     parser.add_argument('--is_eval_script', action='store_true',
                         help='Run probe evaluation', required=False)
+    parser.add_argument('--do_rerun', action='store_true',
+                        help='Rerun completed runs', required=False)
     args, unparsed = parser.parse_known_args()
     main(args, unparsed)

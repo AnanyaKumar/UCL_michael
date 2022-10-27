@@ -14,7 +14,7 @@ class Der(ContinualModel):
     def observe(self, inputs1, labels, inputs2, notaug_inputs):
 
         self.opt.zero_grad()
-        if self.args.cl_default:
+        if self.args.cl_default or self.args.lpft_monitor:
             labels = labels.to(self.device)
             outputs = self.net.backbone(inputs1.to(self.device))
             loss = self.loss(outputs, labels).mean()

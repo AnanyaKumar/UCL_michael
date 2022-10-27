@@ -82,12 +82,13 @@ if __name__ == '__main__':
                         help='Metrics to use to pick best (higher better) row and checkpoint.')
     parser.add_argument('--output_metrics', type=str, nargs='+',
                         help='Metrics to output.')
-    parser.add_argument('--output_file', type=str,
+    parser.add_argument('--output_file', type=str, required=False,
                         help='Path to output results, should end with .tsv')
     parser.add_argument('--take_last', choices=['task', 'epoch'], help='Pick best run using last epoch, or early stop last task')
     parser.add_argument('-v', action='store_true', help="Show all groups, not just the best one for each dir path")
     parser.add_argument('-s', action='store_true', help="Short version: Do not show column names")
-    args = parser.parse_args()
+    args = parser.parse_args() 
+
     # Get all folders satisfying glob.
     dir_paths = glob.glob(args.results_dir_glob, recursive=False)
     dir_paths = [dir_path for dir_path in dir_paths if 'linprobe' not in dir_path]
@@ -111,12 +112,15 @@ if __name__ == '__main__':
             output += '\n'
     
     if args.output_file is None:
-        output_file = str('/tmp/' + f'res_{str(uuid.uuid4())[:4]}.tsv')
+        assert '*' not in args.results_dir_glob
+        output_file = os.path.join(args.results_dir_glob, "best_stat.tsv")
+        # output_file = str('/tmp/' + f'res_{str(uuid.uuid4())[:4]}.tsv')
     else:
         if args.output_file[-4:] != '.tsv':
             raise ValueError('--output_file should end with .tsv')
         output_file = args.output_file
     with open(output_file, "w+") as write_file:
         write_file.write(output)
-    print('Saved results to ' + output_file)
+    cwd = os.getcwd()
+    print('Saved results to ' + os.path.join(cwd, output_file))
 
